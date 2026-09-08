@@ -41,14 +41,20 @@ RUN pnpm db:generate
 # Build the app.
 RUN pnpm build
 
-# Install production dependencies.
+# ----------------------------------------
+# Production Dependencies Stage
+# ----------------------------------------
+# Drop the dev dependency tree, then reinstall production-only. This runs in its
+# own stage so the `migrate` stage can still copy the dev tree from `build`.
+FROM build AS prod-deps
+
 RUN find . -type d -name "node_modules" -prune -exec rm -rf {} +
 RUN pnpm install --offline --prod
 
 # ----------------------------------------
-# Production Stage
+# Runtime Base Stage
 # ----------------------------------------
-FROM base AS production
+FROM base AS runtime
 
 RUN apk add --no-cache ca-certificates
 
@@ -64,11 +70,38 @@ RUN addgroup -S zero && \
 
 USER zero
 
+# ----------------------------------------
+# Migrate Stage
+# ----------------------------------------
+# Applies pending database migrations, then exits. Run as a one-off ECS task.
+#
+# This stage carries the dev dependency tree on purpose. The Prisma CLI,
+# `dotenv`, and `typescript` are all dev dependencies, and `prisma.config.ts`
+# needs all three. `prisma/schema.prisma` declares no datasource `url`, so that
+# config file is the only source of `POSTGRES_URL`.
+#
+# The CMD calls the pnpm shim directly. The shim sets `NODE_PATH` for the pnpm
+# store, then runs `exec`, so exactly one Node process starts.
+FROM runtime AS migrate
+
 COPY --from=build --chown=zero:zero /app/package.json ./package.json
 COPY --from=build --chown=zero:zero /app/node_modules ./node_modules
-COPY --from=build --chown=zero:zero /app/build ./build
 COPY --from=build --chown=zero:zero /app/prisma ./prisma
 COPY --from=build --chown=zero:zero /app/prisma.config.ts ./prisma.config.ts
+
+CMD ["/app/node_modules/.bin/prisma", "migrate", "deploy"]
+
+# ----------------------------------------
+# Production Stage
+# ----------------------------------------
+# Keep this stage last. A build with no `--target` must still produce it.
+FROM runtime AS production
+
+COPY --from=prod-deps --chown=zero:zero /app/package.json ./package.json
+COPY --from=prod-deps --chown=zero:zero /app/node_modules ./node_modules
+COPY --from=prod-deps --chown=zero:zero /app/build ./build
+COPY --from=prod-deps --chown=zero:zero /app/prisma ./prisma
+COPY --from=prod-deps --chown=zero:zero /app/prisma.config.ts ./prisma.config.ts
 
 EXPOSE 3000
 
