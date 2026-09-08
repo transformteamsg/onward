@@ -6,6 +6,7 @@ import Auth from './auth.js';
 export * from './google.js';
 
 export const learnerAuth = Auth(valkey, {
+  namespace: 'auth:session:learner',
   cookies: {
     session: {
       name: 'learner.session',
@@ -19,6 +20,7 @@ export const learnerAuth = Auth(valkey, {
 });
 
 export const adminAuth = Auth(valkey, {
+  namespace: 'auth:session:admin',
   session: {
     authenticatedTimeout: '1d',
   },

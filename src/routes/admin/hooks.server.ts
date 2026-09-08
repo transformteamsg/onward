@@ -2,6 +2,7 @@ import { type Handle, redirect } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 
 import { nanoid } from '$lib/helpers/index.js';
+import { type AdminAccess, verifyAdminAccess } from '$lib/server/auth/admin.js';
 import { adminAuth } from '$lib/server/auth/index.js';
 import { logger } from '$lib/server/logger.js';
 
@@ -19,10 +20,16 @@ const requestLoggingHandle: Handle = async ({ event, resolve }) => {
 };
 
 /**
- * A handle that enforces authentication on admin routes.
- * - Requests for google auth (`/admin/auth/google/*`) are always allowed through.
- * - Unauthenticated users are redirected to `/admin/auth/google?return_to=%2Fadmin`.
- * - Authenticated users who are not 'admin' are redirected to `/admin/auth/google?return_to=%2Fadmin`.
+ * A handle that enforces authentication and admin authorisation on admin routes.
+ * - Requests for google auth (`/admin/auth/google/*`) and `/admin/login` are always allowed through.
+ * - Unauthenticated requests are redirected to `/admin/login`.
+ * - Every other request is authorised against the `UserAdmin` table on each request. A session is
+ *   allowed through only when its id resolves to an active `UserAdmin`. A session that does not,
+ *   or a lookup that fails, is signed out and redirected to `/admin/login`.
+ *
+ * The lookup runs per request on purpose. The session payload only records what was true at
+ * sign-in, so trusting it would let a removed or deactivated admin keep access for the whole
+ * remaining lifetime of the session.
  */
 const routeProtectionHandle: Handle = async ({ event, resolve }) => {
   if (
@@ -42,13 +49,31 @@ const routeProtectionHandle: Handle = async ({ event, resolve }) => {
   }
 
   const user = event.locals.session.user;
-  if ('isActive' in user && user.isActive === false) {
+
+  let access: AdminAccess;
+  try {
+    access = await verifyAdminAccess(user.id);
+  } catch (err) {
+    event.locals.logger.error(
+      { err, email: user.email },
+      'Failed to verify admin access; denying the request',
+    );
+    return redirect(303, '/admin/login?error=server_error');
+  }
+
+  if (!access.granted) {
     event.locals.logger.warn(
-      { email: user.email },
-      'Inactive admin attempted to access protected route',
+      { email: user.email, reason: access.reason },
+      'Session is not an active admin; denying access to protected route',
     );
     await adminAuth.signOut(event);
-    return redirect(303, '/admin?error=inactive');
+
+    return redirect(
+      303,
+      access.reason === 'inactive'
+        ? '/admin/login?error=inactive'
+        : '/admin/login?error=unauthorized',
+    );
   }
 
   return resolve(event);

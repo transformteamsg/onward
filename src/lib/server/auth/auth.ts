@@ -112,7 +112,10 @@ export interface AuthOptions {
    * The namespace used for storing session data in Valkey.
    * This value is prepended to all session keys to avoid collisions with other data.
    *
-   * @default 'auth:session'
+   * Every {@link Auth} instance is a separate authentication realm and **must** be given its own
+   * namespace. Two realms that share a namespace also share a keyspace, so a session id minted by
+   * one realm resolves in the other — the realms would then be separated only by cookie name,
+   * which the client controls. There is deliberately no default.
    */
   namespace: string;
   /**
@@ -205,11 +208,6 @@ const DEFAULT_COOKIES_CSRF_OPTIONS: AuthOptions['cookies']['csrf']['options'] = 
 };
 
 /**
- * The default namespace used for storing session data in Valkey.
- */
-const DEFAULT_NAMESPACE = 'auth:session';
-
-/**
  * The default function to generate a session ID.
  */
 const DEFAULT_GENERATE_ID: AuthOptions['generateId'] = () => nanoid(32);
@@ -227,7 +225,7 @@ const DEFAULT_GENERATE_CSRF_TOKEN: AuthOptions['generateCSRFToken'] = () => nano
  * import Auth from "@onward/auth";
  * import { valkey } from './valkey.js';
  *
- * export const auth = Auth(valkey);
+ * export const auth = Auth(valkey, { namespace: 'auth:session:learner' });
  *
  * // src/hooks.server.ts
  * import type { Handle } from '@sveltejs/kit';
@@ -238,10 +236,20 @@ const DEFAULT_GENERATE_CSRF_TOKEN: AuthOptions['generateCSRFToken'] = () => nano
  * ```
  *
  * @param valkey - The Valkey client instance.
- * @param options - An options to override the default configuration.
+ * @param options - The configuration for this realm. `namespace` is required; everything else
+ *                  overrides a default.
  * @returns A set of functions that set up authentication middleware and utilities to interact with the session in SvelteKit.
  */
-export default function Auth(valkey: GlideClient, options?: PartialDeep<AuthOptions>): AuthResult {
+export default function Auth(
+  valkey: GlideClient,
+  options: PartialDeep<AuthOptions> & Pick<AuthOptions, 'namespace'>,
+): AuthResult {
+  if (!options.namespace) {
+    throw new Error(
+      'Missing "namespace" option. Each Auth instance is a separate realm and requires its own namespace.',
+    );
+  }
+
   const defaultTimeout = options?.session?.defaultTimeout
     ? typeof options.session.defaultTimeout === 'number'
       ? options.session.defaultTimeout
@@ -287,7 +295,7 @@ export default function Auth(valkey: GlideClient, options?: PartialDeep<AuthOpti
         },
       },
     },
-    namespace: options?.namespace ?? DEFAULT_NAMESPACE,
+    namespace: options.namespace,
     generateId: options?.generateId ?? DEFAULT_GENERATE_ID,
     generateCSRFToken: options?.generateCSRFToken ?? DEFAULT_GENERATE_CSRF_TOKEN,
   } satisfies AuthOptions;

@@ -148,6 +148,10 @@ export default class Session {
       return null;
     }
 
+    // The presence of `isActive` marks a payload written from an {@link AdminUser}. Nothing
+    // authorises off this flag: each realm has its own Valkey namespace, and the admin route
+    // guard re-resolves the session against the `UserAdmin` table on every request. The flag
+    // only decides which shape to hand back.
     const isAdmin = 'isActive' in payload['user'];
 
     return new Session({
@@ -158,8 +162,11 @@ export default class Session {
             id: payload['user']['id'],
             email: payload['user']['email'],
             name: payload['user']['name'],
+            // A stored value that is not a boolean means the payload is corrupt, so fail closed.
             isActive:
-              typeof payload['user']['isActive'] === 'boolean' ? payload['user']['isActive'] : true,
+              typeof payload['user']['isActive'] === 'boolean'
+                ? payload['user']['isActive']
+                : false,
           }
         : {
             id: payload['user']['id'],
