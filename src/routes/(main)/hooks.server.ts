@@ -8,6 +8,7 @@ import {
   getCloudFrontSignedCookies,
 } from '$lib/server/cloudfront.js';
 import { logger } from '$lib/server/logger.js';
+import { decodeRoutePathname } from '$lib/server/request-path.js';
 
 /**
  * A handle that adds a request ID to the response headers and attaches a scoped logger to the
@@ -29,12 +30,21 @@ const requestLoggingHandle: Handle = async ({ event, resolve }) => {
  * - Unauthenticated users are redirected to `/login`
  */
 const routeProtectionHandle: Handle = async ({ event, resolve }) => {
-  if (event.url.pathname.startsWith('/api/')) {
+  // Compare the decoded pathname, because SvelteKit matches routes with it. The raw
+  // `event.url.pathname` keeps its percent-encoding, so `/%6Cogin` would miss the
+  // `/login` tests below while still resolving to the login route.
+  //
+  // The root hook rejects a malformed pathname before this handle runs, so the
+  // fallback is unreachable in practice. It falls back to the raw pathname, which
+  // matches none of the paths below and so takes the most restrictive branch.
+  const routePathname = decodeRoutePathname(event.url.pathname) ?? event.url.pathname;
+
+  if (routePathname.startsWith('/api/')) {
     return await resolve(event);
   }
 
   if (event.locals.session.isAuthenticated) {
-    if (event.url.pathname === '/login') {
+    if (routePathname === '/login') {
       return redirect(302, HOME_PATH);
     }
 
@@ -42,16 +52,19 @@ const routeProtectionHandle: Handle = async ({ event, resolve }) => {
   }
 
   if (
-    event.url.pathname === '/login' ||
-    event.url.pathname === '/auth/google' ||
-    event.url.pathname === '/auth/google/callback' ||
-    event.url.pathname === '/terms' ||
-    event.url.pathname === '/privacy'
+    routePathname === '/login' ||
+    routePathname === '/auth/google' ||
+    routePathname === '/auth/google/callback' ||
+    routePathname === '/terms' ||
+    routePathname === '/privacy'
   ) {
     return await resolve(event);
   }
 
-  return redirect(303, `/login?return_to=${encodeURIComponent(event.url.pathname)}`);
+  // Send the decoded pathname, so `return_to` carries the canonical path. The raw
+  // pathname would be encoded a second time here and would then return the user to
+  // the encoded form after sign-in.
+  return redirect(303, `/login?return_to=${encodeURIComponent(routePathname)}`);
 };
 
 const cloudFrontCookieHandle: Handle = async ({ event, resolve }) => {

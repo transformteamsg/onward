@@ -5,6 +5,7 @@ import { nanoid } from '$lib/helpers/index.js';
 import { type AdminAccess, verifyAdminAccess } from '$lib/server/auth/admin.js';
 import { adminAuth } from '$lib/server/auth/index.js';
 import { logger } from '$lib/server/logger.js';
+import { decodeRoutePathname } from '$lib/server/request-path.js';
 
 /**
  * A handle that adds a request ID to the response headers and attaches a scoped logger to the
@@ -32,10 +33,19 @@ const requestLoggingHandle: Handle = async ({ event, resolve }) => {
  * remaining lifetime of the session.
  */
 const routeProtectionHandle: Handle = async ({ event, resolve }) => {
+  // Compare the decoded pathname, because SvelteKit matches routes with it. The raw
+  // `event.url.pathname` keeps its percent-encoding, so `/%61dmin/login` would miss
+  // the exemptions below while still resolving to the admin login route.
+  //
+  // The root hook rejects a malformed pathname before this handle runs, so the
+  // fallback is unreachable in practice. It falls back to the raw pathname, which
+  // matches no exemption and so goes through the guard below.
+  const routePathname = decodeRoutePathname(event.url.pathname) ?? event.url.pathname;
+
   if (
-    event.url.pathname === '/admin/auth/google' ||
-    event.url.pathname === '/admin/auth/google/callback' ||
-    event.url.pathname === '/admin/login'
+    routePathname === '/admin/auth/google' ||
+    routePathname === '/admin/auth/google/callback' ||
+    routePathname === '/admin/login'
   ) {
     return resolve(event);
   }
