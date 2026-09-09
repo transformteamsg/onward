@@ -6,7 +6,7 @@
   import { onMount } from 'svelte';
 
   import { browser } from '$app/environment';
-  import { enhance } from '$app/forms';
+  import { applyAction, enhance } from '$app/forms';
   import { Badge } from '$lib/components/Badge/index.js';
   import { Button, LinkButton } from '$lib/components/Button/index.js';
   import { Modal } from '$lib/components/Modal/index.js';
@@ -14,12 +14,21 @@
     HOME_PATH,
     IsWithinViewport,
     noop,
+    PASSING_SCORE,
     trackQuizAttempt,
     trackQuizCompletion,
   } from '$lib/helpers/index.js';
   import { Player } from '$lib/states/index.js';
 
-  const PASSING_SCORE = 80;
+  /**
+   * The feedback the `checkAnswer` action returns for a single question. The correct answer reaches
+   * the browser here only — after the learner commits to a selection.
+   */
+  interface Feedback {
+    isCorrect: boolean;
+    answer: number;
+    explanation: string;
+  }
 
   const { data, params } = $props();
 
@@ -29,10 +38,14 @@
   let isFeedbackModalOpen = $state(false);
   let isCompletionModalOpen = $state(false);
   let isQuizFailedModalOpen = $state(false);
+  let isCheckingAnswer = $state(false);
+  let isSubmitting = $state(false);
+  let feedback = $state<Feedback | null>(null);
   let correctAnswers = $state(0);
+  let gradedQuestions = $state<number | null>(null);
 
   const currentQuestionAnswer = $derived(data.questionAnswers[currentQuestionAnswerIndex]);
-  const isCorrectAnswer = $derived(selectedOptionIndex === currentQuestionAnswer.answer);
+  const totalQuestions = $derived(gradedQuestions ?? data.questionAnswers.length);
   const isLastQuestionAnswer = $derived(
     currentQuestionAnswerIndex === data.questionAnswers.length - 1,
   );
@@ -40,53 +53,76 @@
   const player = Player.get();
   const isWithinViewport = new IsWithinViewport(() => target);
 
-  let score = 0;
-  let isQuizPassed = false;
-
   onMount(() => {
     player.stop();
   });
 
-  const toggleFeedbackModalVisibility = () => {
-    trackQuizAttempt(params.id.toString(), currentQuestionAnswer.id);
-
-    isFeedbackModalOpen = !isFeedbackModalOpen;
+  const closeFeedbackModal = () => {
+    isFeedbackModalOpen = false;
   };
 
-  const handleContinueClick = async () => {
-    isFeedbackModalOpen = false;
+  const handleCheckAnswer: SubmitFunction = () => {
+    isCheckingAnswer = true;
 
-    if (data.isRequired && isCorrectAnswer) {
-      correctAnswers++;
-    }
+    trackQuizAttempt(params.id.toString(), currentQuestionAnswer.id);
 
+    return async ({ result }) => {
+      isCheckingAnswer = false;
+
+      if (result.type !== 'success' || !result.data) {
+        await applyAction(result);
+        return;
+      }
+
+      feedback = result.data as Feedback;
+      isFeedbackModalOpen = true;
+    };
+  };
+
+  const handleContinueClick = () => {
+    // On the last question the button submits the quiz. The feedback modal stays open until the
+    // server returns the outcome, so that no bare page shows while the request is in flight.
     if (isLastQuestionAnswer) {
       return;
     }
+
+    isFeedbackModalOpen = false;
+    feedback = null;
 
     // Move to next question.
     currentQuestionAnswerIndex++;
     selectedOptionIndex = -1;
   };
 
-  const handleSubmit: SubmitFunction = async (event) => {
-    if (data.isRequired) {
-      score = Math.round((correctAnswers / data.questionAnswers.length) * 100);
-      isQuizPassed = score >= PASSING_SCORE;
-
-      event.formData.append('isQuizPassed', isQuizPassed.toString());
-    }
+  const handleSubmit: SubmitFunction = () => {
+    isSubmitting = true;
 
     trackQuizCompletion(params.id.toString());
 
-    if (data.isRequired && !isQuizPassed) {
-      isQuizFailedModalOpen = true;
-    } else {
-      isCompletionModalOpen = true;
-    }
+    return async ({ result }) => {
+      isSubmitting = false;
 
-    return async ({ update }) => {
-      await update({ invalidateAll: false });
+      if (result.type !== 'success' || !result.data) {
+        await applyAction(result);
+        return;
+      }
+
+      // The server grades the attempt. The client only decides which outcome to show.
+      const outcome = result.data as {
+        isQuizPassed: boolean | null;
+        correctAnswers: number;
+        totalQuestions: number;
+      };
+
+      correctAnswers = outcome.correctAnswers;
+      gradedQuestions = outcome.totalQuestions;
+      isFeedbackModalOpen = false;
+
+      if (outcome.isQuizPassed === false) {
+        isQuizFailedModalOpen = true;
+      } else {
+        isCompletionModalOpen = true;
+      }
     };
   };
 </script>
@@ -160,97 +196,106 @@
     {/each}
   </div>
 
-  <Button
-    class="py-3.75"
-    width="full"
-    disabled={selectedOptionIndex === -1}
-    onclick={toggleFeedbackModalVisibility}
-  >
-    Check Answer
-  </Button>
+  <form method="POST" action="?/checkAnswer" use:enhance={handleCheckAnswer}>
+    <input type="hidden" name="csrfToken" value={data.csrfToken} />
+    <input type="hidden" name="questionAnswerId" value={currentQuestionAnswer.id} />
+    <input type="hidden" name="selectedOptionIndex" value={selectedOptionIndex} />
+
+    <Button
+      class="py-3.75"
+      width="full"
+      type="submit"
+      disabled={selectedOptionIndex === -1 || isCheckingAnswer}
+    >
+      Check Answer
+    </Button>
+  </form>
 </main>
 
-<Modal isopen={isFeedbackModalOpen} onclose={toggleFeedbackModalVisibility} size="partial">
-  <header class="sticky inset-x-0 top-0 bg-white/90 backdrop-blur-sm">
-    <div class="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-      <span class={['text-xl font-medium', !isCorrectAnswer && 'text-red-600']}>
-        {isCorrectAnswer ? 'Correct answer!' : 'Not quite right!'}
-      </span>
+<Modal isopen={isFeedbackModalOpen} onclose={closeFeedbackModal} size="partial">
+  {#if feedback}
+    <header class="sticky inset-x-0 top-0 bg-white/90 backdrop-blur-sm">
+      <div class="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
+        <span class={['text-xl font-medium', !feedback.isCorrect && 'text-red-600']}>
+          {feedback.isCorrect ? 'Correct answer!' : 'Not quite right!'}
+        </span>
 
-      <button
-        onclick={toggleFeedbackModalVisibility}
-        class="cursor-pointer rounded-full p-3 transition-colors hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-950 focus-visible:outline-dashed"
-      >
-        <X />
-      </button>
-    </div>
-  </header>
-
-  <main class="mx-auto flex min-h-[calc(100%-72px)] max-w-5xl flex-col gap-y-10 px-4 py-3">
-    <div class="flex flex-1 flex-col gap-y-4">
-      <div class="flex flex-col gap-y-2">
-        <span class="font-medium">Your answer</span>
-
-        <div
-          class={[
-            'flex items-center gap-x-3 rounded-2xl border px-2.5 py-3.5',
-            isCorrectAnswer ? 'border-transparent bg-lime-200' : 'border-red-600 bg-white',
-          ]}
+        <button
+          onclick={closeFeedbackModal}
+          class="cursor-pointer rounded-full p-3 transition-colors hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-950 focus-visible:outline-dashed"
         >
-          <span
-            class={[
-              'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-semibold',
-              isCorrectAnswer ? 'bg-lime-400' : 'bg-red-500 text-white',
-            ]}
-          >
-            {String.fromCharCode(65 + selectedOptionIndex)}
-          </span>
-
-          <span class={['text-left', !isCorrectAnswer && 'text-red-600']}>
-            {currentQuestionAnswer.options[selectedOptionIndex]}
-          </span>
-        </div>
+          <X />
+        </button>
       </div>
+    </header>
 
-      {#if !isCorrectAnswer}
+    <main class="mx-auto flex min-h-[calc(100%-72px)] max-w-5xl flex-col gap-y-10 px-4 py-3">
+      <div class="flex flex-1 flex-col gap-y-4">
         <div class="flex flex-col gap-y-2">
-          <span class="font-medium">Correct answer</span>
+          <span class="font-medium">Your answer</span>
 
           <div
-            class="flex items-center gap-x-3 rounded-2xl border border-transparent bg-lime-200 px-2.5 py-3.5"
+            class={[
+              'flex items-center gap-x-3 rounded-2xl border px-2.5 py-3.5',
+              feedback.isCorrect ? 'border-transparent bg-lime-200' : 'border-red-600 bg-white',
+            ]}
           >
             <span
-              class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-lime-400 font-semibold"
+              class={[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-semibold',
+                feedback.isCorrect ? 'bg-lime-400' : 'bg-red-500 text-white',
+              ]}
             >
-              {String.fromCharCode(65 + currentQuestionAnswer.answer)}
+              {String.fromCharCode(65 + selectedOptionIndex)}
             </span>
 
-            <span class="text-left">
-              {currentQuestionAnswer.options[currentQuestionAnswer.answer]}
+            <span class={['text-left', !feedback.isCorrect && 'text-red-600']}>
+              {currentQuestionAnswer.options[selectedOptionIndex]}
             </span>
           </div>
         </div>
-      {/if}
 
-      <div class="flex flex-col gap-y-2 rounded-2xl bg-slate-100 p-3">
-        <span class="font-medium text-slate-500">Explanation</span>
-        <span>{currentQuestionAnswer.explanation}</span>
+        {#if !feedback.isCorrect}
+          <div class="flex flex-col gap-y-2">
+            <span class="font-medium">Correct answer</span>
+
+            <div
+              class="flex items-center gap-x-3 rounded-2xl border border-transparent bg-lime-200 px-2.5 py-3.5"
+            >
+              <span
+                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-lime-400 font-semibold"
+              >
+                {String.fromCharCode(65 + feedback.answer)}
+              </span>
+
+              <span class="text-left">
+                {currentQuestionAnswer.options[feedback.answer]}
+              </span>
+            </div>
+          </div>
+        {/if}
+
+        <div class="flex flex-col gap-y-2 rounded-2xl bg-slate-100 p-3">
+          <span class="font-medium text-slate-500">Explanation</span>
+          <span>{feedback.explanation}</span>
+        </div>
       </div>
-    </div>
 
-    <form method="POST" action="?/updateLJCompletionStatus" use:enhance={handleSubmit}>
-      <input type="hidden" name="csrfToken" value={data.csrfToken} />
+      <form method="POST" action="?/updateLJCompletionStatus" use:enhance={handleSubmit}>
+        <input type="hidden" name="csrfToken" value={data.csrfToken} />
 
-      <Button
-        class="py-3.75"
-        width="full"
-        type={isLastQuestionAnswer ? 'submit' : 'button'}
-        onclick={handleContinueClick}
-      >
-        Continue
-      </Button>
-    </form>
-  </main>
+        <Button
+          class="py-3.75"
+          width="full"
+          type={isLastQuestionAnswer ? 'submit' : 'button'}
+          disabled={isSubmitting}
+          onclick={handleContinueClick}
+        >
+          Continue
+        </Button>
+      </form>
+    </main>
+  {/if}
 </Modal>
 
 <Modal isopen={isCompletionModalOpen} onclose={noop} variant="light">
@@ -293,9 +338,9 @@
   <div class="mx-auto flex min-h-svh max-w-5xl flex-col items-center justify-center px-4 py-6">
     <div class="flex flex-col items-center justify-center gap-y-1">
       <span class="text-xl font-medium">Try again!</span>
-      <span class="text-xl font-bold">{correctAnswers}/{data.questionAnswers.length}</span>
+      <span class="text-xl font-bold">{correctAnswers}/{totalQuestions}</span>
       <span>
-        You need {Math.ceil((data.questionAnswers.length * PASSING_SCORE) / 100)} points to pass
+        You need {Math.ceil((totalQuestions * PASSING_SCORE) / 100)} points to pass
       </span>
     </div>
 
