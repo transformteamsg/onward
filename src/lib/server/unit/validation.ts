@@ -1,3 +1,4 @@
+import { isSafeHttpURL } from '$lib/helpers/index.js';
 import { ContentType } from '$lib/server/db.js';
 
 export const ERROR_MESSAGES = {
@@ -62,13 +63,10 @@ function parseContentItems(
     } else {
       if (!item.url || typeof item.url !== 'string' || item.url.trim().length === 0) {
         err.url = ERROR_MESSAGES.FIELD_REQUIRED;
+      } else if (isSafeHttpURL(item.url.trim())) {
+        item.url = item.url.trim();
       } else {
-        try {
-          new URL(item.url.trim());
-          item.url = item.url.trim();
-        } catch {
-          err.url = ERROR_MESSAGES.INVALID_DATA('URL');
-        }
+        err.url = ERROR_MESSAGES.INVALID_DATA('URL');
       }
     }
 
@@ -232,13 +230,10 @@ export function validateLearningUnitDraft(
         if (
           source.sourceURL &&
           typeof source.sourceURL === 'string' &&
-          source.sourceURL.trim().length > 0
+          source.sourceURL.trim().length > 0 &&
+          !isSafeHttpURL(source.sourceURL.trim())
         ) {
-          try {
-            new URL(source.sourceURL.trim());
-          } catch {
-            itemError.sourceURL = ERROR_MESSAGES.INVALID_DATA('URL');
-          }
+          itemError.sourceURL = ERROR_MESSAGES.INVALID_DATA('URL');
         }
 
         if (Object.keys(itemError).length > 0) {
@@ -416,12 +411,8 @@ export function validateLearningUnit(data: FormData):
           source.sourceURL.trim().length === 0
         ) {
           itemError.sourceURL = ERROR_MESSAGES.FIELD_REQUIRED;
-        } else {
-          try {
-            new URL(source.sourceURL);
-          } catch {
-            itemError.sourceURL = ERROR_MESSAGES.INVALID_DATA('URL');
-          }
+        } else if (!isSafeHttpURL(source.sourceURL)) {
+          itemError.sourceURL = ERROR_MESSAGES.INVALID_DATA('URL');
         }
 
         if (typeof source.tagId !== 'string') {

@@ -1,6 +1,8 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import { validateLearningUnit, validateLearningUnitDraft } from './validation.js';
+
+vi.mock('$env/dynamic/public', () => ({ env: {} }));
 
 function makeFormData(fields: Record<string, string | string[]>): FormData {
   const fd = new FormData();
@@ -107,6 +109,82 @@ describe('validateLearningUnit - contents', () => {
       contents: JSON.stringify([
         { type: 'VIDEO', url: 'https://example.com/video/123' },
         { type: 'PODCAST', url: 'https://example.com/audio.mp3' },
+      ]),
+    });
+    expect(validateLearningUnit(fd).success).toBe(true);
+  });
+});
+
+const UNSAFE_URLS = [
+  'javascript:alert(document.cookie)',
+  'JaVaScRiPt:alert(1)',
+  'data:text/html,<script>alert(1)</script>',
+  'vbscript:msgbox(1)',
+  'file:///etc/passwd',
+];
+
+describe('URL scheme validation', () => {
+  test.each(UNSAFE_URLS)('draft rejects content URL with scheme: %s', (url) => {
+    const fd = makeFormData({
+      ...BASE_DRAFT,
+      contents: JSON.stringify([{ type: 'VIDEO', url }]),
+    });
+    const result = validateLearningUnitDraft(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.contents?.items?.[0].url).toBeDefined();
+    }
+  });
+
+  test.each(UNSAFE_URLS)('draft rejects source URL with scheme: %s', (url) => {
+    const fd = makeFormData({
+      ...BASE_DRAFT,
+      sources: JSON.stringify([{ title: 'Read more', sourceURL: url, tagId: 'tag-1' }]),
+    });
+    const result = validateLearningUnitDraft(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.sources?.items?.[0].sourceURL).toBeDefined();
+    }
+  });
+
+  test.each(UNSAFE_URLS)('publish rejects content URL with scheme: %s', (url) => {
+    const fd = makeFormData({
+      ...BASE_PUBLISH,
+      contents: JSON.stringify([{ type: 'VIDEO', url }]),
+    });
+    expect(validateLearningUnit(fd).success).toBe(false);
+  });
+
+  test.each(UNSAFE_URLS)('publish rejects source URL with scheme: %s', (url) => {
+    const fd = makeFormData({
+      ...BASE_PUBLISH,
+      contents: JSON.stringify([{ type: 'VIDEO', url: 'https://example.com/video/123' }]),
+      sources: JSON.stringify([{ title: 'Read more', sourceURL: url, tagId: 'tag-1' }]),
+    });
+    const result = validateLearningUnit(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.sources?.items?.[0].sourceURL).toBeDefined();
+    }
+  });
+
+  test('draft accepts an http source URL', () => {
+    const fd = makeFormData({
+      ...BASE_DRAFT,
+      sources: JSON.stringify([
+        { title: 'Read more', sourceURL: 'http://example.com/a', tagId: 'tag-1' },
+      ]),
+    });
+    expect(validateLearningUnitDraft(fd).success).toBe(true);
+  });
+
+  test('publish accepts an https source URL', () => {
+    const fd = makeFormData({
+      ...BASE_PUBLISH,
+      contents: JSON.stringify([{ type: 'VIDEO', url: 'https://example.com/video/123' }]),
+      sources: JSON.stringify([
+        { title: 'Read more', sourceURL: 'https://example.com/a', tagId: 'tag-1' },
       ]),
     });
     expect(validateLearningUnit(fd).success).toBe(true);

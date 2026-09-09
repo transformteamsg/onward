@@ -30,6 +30,7 @@
     COLLECTION_BG_COLOR,
     getBadgeInfo,
     HOME_PATH,
+    isSafeHttpURL,
     IsWithinViewport,
     track20PercentVideoPlay,
     track50PercentVideoPlay,
@@ -446,6 +447,27 @@
   </div>
 </main>
 
+{#snippet sourceCard(source: (typeof data.learningUnitSources)[number], isLink: boolean)}
+  <div class="flex w-[calc(100%-36px)] flex-col gap-y-1">
+    <div class="flex flex-wrap gap-2">
+      {#each source.tags.map((t) => t.tag) as tag (tag)}
+        {@const badgeInfo = getBadgeInfo(tag.code)}
+        <Badge variant={badgeInfo.variant}>{badgeInfo.label}</Badge>
+      {/each}
+    </div>
+
+    <span class="truncate">
+      {source.title}
+    </span>
+  </div>
+
+  <div class="flex items-center justify-center">
+    {#if isLink}
+      <ExternalLink class="h-5 w-5" />
+    {/if}
+  </div>
+{/snippet}
+
 <Modal isopen={isSourcesModalOpen} onclose={toggleSourcesModal} size="partial">
   <header class="sticky inset-x-0 top-0 bg-white/90 backdrop-blur-sm">
     <div class="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
@@ -467,28 +489,19 @@
 
     <div class="flex flex-col gap-y-4">
       {#each data.learningUnitSources as source (source)}
-        <a
-          href={source.sourceURL}
-          target="_blank"
-          class="inline-flex gap-x-4 rounded-2xl border border-slate-200 bg-white p-3"
-        >
-          <div class="flex w-[calc(100%-36px)] flex-col gap-y-1">
-            <div class="flex flex-wrap gap-2">
-              {#each source.tags.map((t) => t.tag) as tag (tag)}
-                {@const badgeInfo = getBadgeInfo(tag.code)}
-                <Badge variant={badgeInfo.variant}>{badgeInfo.label}</Badge>
-              {/each}
-            </div>
-
-            <span class="truncate">
-              {source.title}
-            </span>
+        {#if isSafeHttpURL(source.sourceURL)}
+          <a
+            href={source.sourceURL}
+            target="_blank"
+            class="inline-flex gap-x-4 rounded-2xl border border-slate-200 bg-white p-3"
+          >
+            {@render sourceCard(source, true)}
+          </a>
+        {:else}
+          <div class="inline-flex gap-x-4 rounded-2xl border border-slate-200 bg-white p-3">
+            {@render sourceCard(source, false)}
           </div>
-
-          <div class="flex items-center justify-center">
-            <ExternalLink class="h-5 w-5" />
-          </div>
-        </a>
+        {/if}
       {/each}
     </div>
   </main>
