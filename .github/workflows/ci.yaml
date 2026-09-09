@@ -161,3 +161,23 @@ jobs:
           tags: ${{ steps.metadata.outputs.tags }}
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+      - name: Extract metadata for migrate image
+        id: metadata-migrate
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr-repository }}
+          tags: |
+            type=ref,event=pr,suffix=-{{sha}}-migrate
+            type=ref,event=pr,suffix=-latest-migrate
+
+      - name: Build and push migrate image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: migrate
+          push: true
+          platforms: linux/arm64
+          tags: ${{ steps.metadata-migrate.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.app }}
