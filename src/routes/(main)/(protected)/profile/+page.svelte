@@ -66,13 +66,16 @@
           <ArrowLeft />
         </a>
       </div>
-      <a
-        href="/logout"
-        class="rounded-full p-4 transition-colors hover:bg-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-950 focus-visible:outline-dashed"
-        data-sveltekit-reload
-      >
-        Log out
-      </a>
+      <!-- Sign-out is a POST with the session CSRF token, so a cross-site page cannot force it. -->
+      <form method="POST" action="/logout">
+        <input type="hidden" name="csrfToken" value={data.csrfToken} />
+        <button
+          type="submit"
+          class="cursor-pointer rounded-full p-4 transition-colors hover:bg-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-950 focus-visible:outline-dashed"
+        >
+          Log out
+        </button>
+      </form>
     </div>
   </div>
 </header>

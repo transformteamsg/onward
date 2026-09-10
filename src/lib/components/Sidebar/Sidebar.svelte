@@ -12,9 +12,13 @@
     title: string;
     currentPath: string;
     navItems: NavItem[];
+    /**
+     * The masked session CSRF token, submitted by the sign-out form.
+     */
+    csrfToken: string;
   }
 
-  let { title, currentPath, navItems }: Props = $props();
+  let { title, currentPath, navItems, csrfToken }: Props = $props();
 
   const isActive = (href: string): boolean => {
     return currentPath === href;
@@ -48,13 +52,16 @@
 
   <!-- Sidebar Footer -->
   <div class="pb-4">
-    <a
-      href="/admin/logout"
-      data-sveltekit-noscroll
-      class="flex items-center rounded-md px-6 py-2.5 text-sm font-medium transition-colors hover:bg-slate-100 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-950 focus-visible:outline-dashed"
-    >
-      <LogOut class="mr-3 h-5 w-5 flex-shrink-0" />
-      Logout
-    </a>
+    <!-- Sign-out is a POST with the session CSRF token, so a cross-site page cannot force it. -->
+    <form method="POST" action="/admin/logout">
+      <input type="hidden" name="csrfToken" value={csrfToken} />
+      <button
+        type="submit"
+        class="flex w-full cursor-pointer items-center rounded-md px-6 py-2.5 text-sm font-medium transition-colors hover:bg-slate-100 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-950 focus-visible:outline-dashed"
+      >
+        <LogOut class="mr-3 h-5 w-5 flex-shrink-0" />
+        Logout
+      </button>
+    </form>
   </div>
 </aside>
