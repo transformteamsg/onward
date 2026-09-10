@@ -28,6 +28,14 @@ const SENTINEL_BASE = 'https://return-to.invalid';
  * `//attacker.example`. Comparing the parsed origin catches those without this function
  * having to model the stripping rules itself.
  *
+ * The parser also collapses dot segments in the path, so a candidate such as
+ * `/.//attacker.example` -- which starts with a single `/` and so passes all three
+ * checks above -- normalizes to a `pathname` of `//attacker.example`. The origin is
+ * still `SENTINEL_BASE` (dot-segment collapse only changes the path, not the
+ * authority), so the origin check does not catch it. The result is checked again for
+ * the same `//`/`/\` authority-in-path-position shape after the parse, because the
+ * parser can manufacture that shape even when the raw candidate did not contain it.
+ *
  * The return value is the parsed `pathname`, `search`, and `hash`, never the candidate
  * string. A browser parses the `Location` header with the same rules used here, so
  * returning the parsed form removes any gap between what this function judged and what
@@ -62,6 +70,10 @@ export function resolveReturnTo(candidate: unknown, fallback: string): string {
   }
 
   if (resolved.origin !== SENTINEL_BASE) {
+    return fallback;
+  }
+
+  if (resolved.pathname.startsWith('//') || resolved.pathname.startsWith('/\\')) {
     return fallback;
   }
 

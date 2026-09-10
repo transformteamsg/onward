@@ -112,6 +112,13 @@ describe('GET /auth/google/callback', () => {
     });
   });
 
+  test('does not follow a dot segment that collapses into a protocol-relative path', async () => {
+    await expect(GET(buildEvent('/.//attacker.example'))).rejects.toMatchObject({
+      status: 302,
+      location: HOME_PATH,
+    });
+  });
+
   test('still signs the learner in when it rejects the return_to', async () => {
     await expect(GET(buildEvent('https://attacker.example'))).rejects.toMatchObject({
       status: 302,

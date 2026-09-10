@@ -68,4 +68,16 @@ describe('resolveReturnTo', () => {
   test('returns the caller fallback, so each realm keeps its own landing path', () => {
     expect(resolveReturnTo('https://attacker.example', '/admin')).toBe('/admin');
   });
+
+  test('falls back for a dot segment that collapses into a protocol-relative path', () => {
+    expect(resolveReturnTo('/.//attacker.example', FALLBACK)).toBe(FALLBACK);
+  });
+
+  test('falls back for a parent-directory segment that collapses the same way', () => {
+    expect(resolveReturnTo('/..//attacker.example', FALLBACK)).toBe(FALLBACK);
+  });
+
+  test('falls back for a dot segment combined with a backslash, which also collapses', () => {
+    expect(resolveReturnTo('/.//\\attacker.example', FALLBACK)).toBe(FALLBACK);
+  });
 });
