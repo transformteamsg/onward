@@ -107,9 +107,14 @@ export const load: PageServerLoad = async (event) => {
     return redirect(303, `/unit/${event.params.id}`);
   }
 
-  // `answer` and `explanation` are deliberately absent: both give the answer key away, and the
-  // learner must not hold it before answering. The `checkAnswer` action releases them for one
-  // question at a time, after the learner commits to a selection.
+  // The payload carries no answer key, on every quiz. A browser that holds `answer` can build a
+  // passing submission, and a browser that holds `explanation` leaks the reasoning with it. The
+  // `checkAnswer` action releases both one question at a time, after the learner commits to a
+  // selection that the server has recorded.
+  //
+  // This holds whether or not the unit is required. A required unit needs it to keep its verdict
+  // honest. A unit that is not required keeps it so that both quizzes read the same way to a
+  // learner, and so that flipping `isRequired` later exposes nothing that was already shown.
   return {
     csrfToken: event.locals.session.csrfToken(),
     questionAnswers: learningUnit.questionAnswers,
@@ -191,17 +196,30 @@ export const actions: Actions = {
       throw error(400);
     }
 
+    // Every quiz records the selection before the answer is revealed, so that the reveal cannot be
+    // replayed into a better one. Only a required unit is graded from the record, but the recording
+    // itself is unconditional, so both quizzes behave the same way to a learner.
+    let effectiveOptionIndex: number;
     try {
-      await recordQuizSelection(user.id, event.params.id, questionAnswer.id, selectedOptionIndex);
+      const recorded = await recordQuizSelection(
+        user.id,
+        event.params.id,
+        questionAnswer.id,
+        selectedOptionIndex,
+      );
+      effectiveOptionIndex = recorded.selectedOptionIndex;
     } catch (err) {
       logger.error({ err }, 'Failed to record quiz answer selection');
       throw error(500);
     }
 
+    // The feedback describes the selection that counts, which on a replayed check is the one
+    // already recorded rather than the one just submitted.
     return {
-      isCorrect: selectedOptionIndex === questionAnswer.answer,
+      isCorrect: effectiveOptionIndex === questionAnswer.answer,
       answer: questionAnswer.answer,
       explanation: questionAnswer.explanation,
+      selectedOptionIndex: effectiveOptionIndex,
     };
   },
 
@@ -258,7 +276,9 @@ export const actions: Actions = {
     }
 
     const grade = gradeQuiz(learningUnit.questionAnswers, selections);
-    // A unit that is not required has no pass or fail verdict, and completing it is enough.
+
+    // Only a required unit carries a pass or fail verdict. A unit that is not required completes on
+    // whatever the learner answered, which is the behaviour it had before this change.
     const isQuizPassed = learningUnit.isRequired ? grade.isQuizPassed : null;
 
     const learningJourney = await db.learningJourney.findUnique({
@@ -277,14 +297,16 @@ export const actions: Actions = {
         update: {
           isCompleted: isQuizPassed ?? true,
           isQuizPassed,
-          numberOfAttempts: { increment: 1 },
+          // Attempts count towards a required unit only. A unit that is not required tracks none,
+          // so the column keeps its default of 0.
+          ...(learningUnit.isRequired ? { numberOfAttempts: { increment: 1 } } : {}),
         },
         create: {
           userId: user.id,
           learningUnitId: learningUnit.id,
           isCompleted: isQuizPassed ?? true,
           isQuizPassed,
-          numberOfAttempts: 1,
+          ...(learningUnit.isRequired ? { numberOfAttempts: 1 } : {}),
         },
       } satisfies LearningJourneyUpsertArgs;
 
@@ -299,8 +321,9 @@ export const actions: Actions = {
     try {
       await clearQuizAttempt(user.id, learningUnit.id);
     } catch (err) {
-      // The attempt has been graded and recorded already, so a failed cleanup is not fatal. The
-      // key expires on its own, and a fresh attempt overwrites every question it answers.
+      // The attempt is graded and recorded already, so a failed cleanup is not fatal. The key
+      // expires on its own. A stale key would otherwise bind the next attempt's answers, because
+      // the first selection for a question wins.
       logger.warn({ err }, 'Failed to clear recorded quiz answer selections');
     }
 

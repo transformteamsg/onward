@@ -21,13 +21,19 @@
   import { Player } from '$lib/states/index.js';
 
   /**
-   * The feedback the `checkAnswer` action returns for a single question. The correct answer reaches
-   * the browser here only — after the learner commits to a selection.
+   * The feedback shown for a single question. The `checkAnswer` action returns it, and this is the
+   * only point at which the correct answer reaches the browser: after the learner commits to a
+   * selection. The page never holds the answer key for a question the learner has not answered.
    */
   interface Feedback {
     isCorrect: boolean;
     answer: number;
     explanation: string;
+    /**
+     * The selection the feedback describes. This is the selection the server recorded, which on a
+     * repeated check is the learner's first answer rather than the latest.
+     */
+    selectedOptionIndex: number;
   }
 
   const { data, params } = $props();
@@ -61,6 +67,10 @@
     isFeedbackModalOpen = false;
   };
 
+  /**
+   * Asks the server to judge the selection. The answer key stays on the server, so the feedback
+   * costs one request per question.
+   */
   const handleCheckAnswer: SubmitFunction = () => {
     isCheckingAnswer = true;
 
@@ -107,7 +117,9 @@
         return;
       }
 
-      // The server grades the attempt. The client only decides which outcome to show.
+      // The server grades the recorded attempt, so the verdict arrives here. The client only decides
+      // which outcome to show. `isQuizPassed` is null for a unit that is not required, because that
+      // unit completes on whatever the learner answered.
       const outcome = result.data as {
         isQuizPassed: boolean | null;
         correctAnswers: number;
@@ -246,11 +258,11 @@
                 feedback.isCorrect ? 'bg-lime-400' : 'bg-red-500 text-white',
               ]}
             >
-              {String.fromCharCode(65 + selectedOptionIndex)}
+              {String.fromCharCode(65 + feedback.selectedOptionIndex)}
             </span>
 
             <span class={['text-left', !feedback.isCorrect && 'text-red-600']}>
-              {currentQuestionAnswer.options[selectedOptionIndex]}
+              {currentQuestionAnswer.options[feedback.selectedOptionIndex]}
             </span>
           </div>
         </div>

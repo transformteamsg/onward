@@ -29,14 +29,20 @@ const {
     mockValidateCSRFToken: vi.fn(),
     mockValkey: {
       hashes,
-      hset: vi.fn(async (key: string, fields: Record<string, string>) => {
+      // Mirrors `HSETNX`: the field is written only when it is absent, and the return value says
+      // whether this call wrote it.
+      hsetnx: vi.fn(async (key: string, field: string, value: string) => {
         const hash = hashes.get(key) ?? new Map<string, string>();
-        for (const [field, value] of Object.entries(fields)) {
-          hash.set(field, value);
-        }
         hashes.set(key, hash);
-        return Object.keys(fields).length;
+
+        if (hash.has(field)) {
+          return false;
+        }
+
+        hash.set(field, value);
+        return true;
       }),
+      hget: vi.fn(async (key: string, field: string) => hashes.get(key)?.get(field) ?? null),
       expire: vi.fn(async () => true),
       hgetall: vi.fn(async (key: string) =>
         [...(hashes.get(key) ?? new Map<string, string>()).entries()].map(([field, value]) => ({
@@ -129,34 +135,42 @@ beforeEach(() => {
 });
 
 describe('quiz page load', () => {
-  test('withholds the answer key and the explanations from the browser', async () => {
-    mockLearningUnitFindUnique.mockResolvedValue({
-      id: UNIT_ID,
-      status: 'PUBLISHED',
-      title: 'Unit',
-      isRequired: true,
-      dueDate: null,
-      questionAnswers: buildQuestionAnswers().map(({ id, question, options, order }) => ({
-        id,
-        question,
-        options,
-        order,
-      })),
-    });
+  // Both quizzes withhold the key, so that they read the same way to a learner and so that flipping
+  // `isRequired` later cannot expose a key that learners have already seen.
+  test.each([
+    { label: 'a required unit', isRequired: true },
+    { label: 'a unit that is not required', isRequired: false },
+  ])(
+    'withholds the answer key and the explanations from the browser for $label',
+    async ({ isRequired }) => {
+      mockLearningUnitFindUnique.mockResolvedValue({
+        id: UNIT_ID,
+        status: 'PUBLISHED',
+        title: 'Unit',
+        isRequired,
+        dueDate: null,
+        questionAnswers: buildQuestionAnswers().map(({ id, question, options, order }) => ({
+          id,
+          question,
+          options,
+          order,
+        })),
+      });
 
-    const data = await load(buildEvent());
-    if (!data) {
-      throw new Error('expected the load to return quiz data');
-    }
+      const data = await load(buildEvent());
+      if (!data) {
+        throw new Error('expected the load to return quiz data');
+      }
 
-    const selected = mockLearningUnitFindUnique.mock.calls[0][0].select.questionAnswers.select;
-    expect(selected).not.toHaveProperty('answer');
-    expect(selected).not.toHaveProperty('explanation');
-    for (const questionAnswer of data.questionAnswers) {
-      expect(questionAnswer).not.toHaveProperty('answer');
-      expect(questionAnswer).not.toHaveProperty('explanation');
-    }
-  });
+      const selected = mockLearningUnitFindUnique.mock.calls[0][0].select.questionAnswers.select;
+      expect(selected).not.toHaveProperty('answer');
+      expect(selected).not.toHaveProperty('explanation');
+      for (const questionAnswer of data.questionAnswers) {
+        expect(questionAnswer).not.toHaveProperty('answer');
+        expect(questionAnswer).not.toHaveProperty('explanation');
+      }
+    },
+  );
 });
 
 describe('checkAnswer action', () => {
@@ -175,10 +189,17 @@ describe('checkAnswer action', () => {
 
     const result = await actions.checkAnswer(event);
 
-    expect(result).toEqual({ isCorrect: true, answer: 1, explanation: 'Explanation 2' });
-    expect(mockValkey.hset).toHaveBeenCalledWith(`quiz_attempt:user-1:${UNIT_ID}`, {
-      [QUESTION_IDS[1]]: '1',
+    expect(result).toEqual({
+      isCorrect: true,
+      answer: 1,
+      explanation: 'Explanation 2',
+      selectedOptionIndex: 1,
     });
+    expect(mockValkey.hsetnx).toHaveBeenCalledWith(
+      `quiz_attempt:user-1:${UNIT_ID}`,
+      QUESTION_IDS[1],
+      '1',
+    );
   });
 
   test('reports a wrong selection as incorrect but still records it', async () => {
@@ -189,10 +210,29 @@ describe('checkAnswer action', () => {
 
     const result = await actions.checkAnswer(event);
 
-    expect(result).toMatchObject({ isCorrect: false, answer: 1 });
-    expect(mockValkey.hset).toHaveBeenCalledWith(`quiz_attempt:user-1:${UNIT_ID}`, {
-      [QUESTION_IDS[1]]: '3',
-    });
+    expect(result).toMatchObject({ isCorrect: false, answer: 1, selectedOptionIndex: 3 });
+    expect(mockValkey.hsetnx).toHaveBeenCalledWith(
+      `quiz_attempt:user-1:${UNIT_ID}`,
+      QUESTION_IDS[1],
+      '3',
+    );
+  });
+
+  test('keeps the first selection when the same question is checked again', async () => {
+    mockQuestionAnswerFindFirst.mockResolvedValue(questionAnswer);
+    const buildCheck = (selectedOptionIndex: string) =>
+      buildEvent({
+        fields: { csrfToken: 'csrf-1', questionAnswerId: QUESTION_IDS[1], selectedOptionIndex },
+      });
+
+    // The wrong selection reveals the correct answer, so the learner then sends that answer back.
+    await actions.checkAnswer(buildCheck('3'));
+    const result = await actions.checkAnswer(buildCheck('1'));
+
+    // The replay changes nothing: the grade still counts the first selection, and the feedback
+    // describes it rather than the one just sent.
+    expect(result).toMatchObject({ isCorrect: false, selectedOptionIndex: 3 });
+    expect(mockValkey.hashes.get(`quiz_attempt:user-1:${UNIT_ID}`)?.get(QUESTION_IDS[1])).toBe('3');
   });
 
   test('only reads a question that belongs to the published unit', async () => {
@@ -216,7 +256,7 @@ describe('checkAnswer action', () => {
     });
 
     await expect(actions.checkAnswer(event)).rejects.toMatchObject({ status: 400 });
-    expect(mockValkey.hset).not.toHaveBeenCalled();
+    expect(mockValkey.hsetnx).not.toHaveBeenCalled();
   });
 
   test('rejects an invalid CSRF token', async () => {
@@ -333,11 +373,24 @@ describe('updateLJCompletionStatus action', () => {
     expect(mockValkey.hashes.size).toBe(0);
   });
 
-  test('completes a unit that is not required without a pass verdict', async () => {
+  const mockOptionalUnit = () => {
     mockLearningUnitFindUnique.mockResolvedValue({
       id: UNIT_ID,
       isRequired: false,
       questionAnswers: buildQuestionAnswers().map(({ id, answer }) => ({ id, answer })),
+    });
+  };
+
+  test('completes a unit that is not required without a pass verdict', async () => {
+    mockOptionalUnit();
+    // Every answer is wrong, and the unit still completes. A unit that is not required needs no
+    // passing score, which is the behaviour it had before this change.
+    recordSelections({
+      [QUESTION_IDS[0]]: 3,
+      [QUESTION_IDS[1]]: 3,
+      [QUESTION_IDS[2]]: 3,
+      [QUESTION_IDS[3]]: 0,
+      [QUESTION_IDS[4]]: 3,
     });
     const event = buildEvent({ fields: { csrfToken: 'csrf-1', isQuizPassed: 'true' } });
 
@@ -348,6 +401,29 @@ describe('updateLJCompletionStatus action', () => {
       update: { isCompleted: true, isQuizPassed: null },
       create: { isCompleted: true, isQuizPassed: null },
     });
+  });
+
+  test('counts no attempt for a unit that is not required', async () => {
+    mockOptionalUnit();
+    recordSelections({ [QUESTION_IDS[0]]: 0 });
+    const event = buildEvent({ fields: { csrfToken: 'csrf-1' } });
+
+    await actions.updateLJCompletionStatus(event);
+
+    const { update, create } = mockLearningJourneyUpsert.mock.calls[0][0];
+    expect(update).not.toHaveProperty('numberOfAttempts');
+    expect(create).not.toHaveProperty('numberOfAttempts');
+  });
+
+  test('clears the recorded attempt for a unit that is not required', async () => {
+    mockOptionalUnit();
+    recordSelections({ [QUESTION_IDS[0]]: 0 });
+    const event = buildEvent({ fields: { csrfToken: 'csrf-1' } });
+
+    await actions.updateLJCompletionStatus(event);
+
+    expect(mockValkey.del).toHaveBeenCalledWith([`quiz_attempt:user-1:${UNIT_ID}`]);
+    expect(mockValkey.hashes.size).toBe(0);
   });
 
   test('leaves an already completed journey untouched', async () => {

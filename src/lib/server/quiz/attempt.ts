@@ -21,25 +21,62 @@ function buildAttemptKey(userId: string, learningUnitId: string): string {
   return `${QUIZ_ATTEMPT_NAMESPACE}:${userId}:${learningUnitId}`;
 }
 
+export interface RecordedQuizSelection {
+  /**
+   * The option index that now counts for the question. On a first selection this is the submitted
+   * index. On a later selection for the same question it is the index already held.
+   */
+  selectedOptionIndex: number;
+  /**
+   * Whether this call recorded the selection. `false` means the question already held one.
+   */
+  isFirstSelection: boolean;
+}
+
 /**
- * Records the option a learner selected for one question of a unit's quiz. A second selection for
- * the same question replaces the first one.
+ * Records the option a learner selected for one question of a unit's quiz. The first selection for
+ * a question binds: a later selection for the same question is discarded.
+ *
+ * This is what makes a recorded attempt worth more than a set of selections posted by the browser.
+ * The caller reveals the correct answer once the learner commits, so an overwritable record would
+ * let the learner send the revealed answer back and pass on the same attempt. `HSETNX` closes that
+ * in one atomic command, with no read-then-write race.
  *
  * @param userId - The ID of the learner taking the quiz.
  * @param learningUnitId - The ID of the learning unit the quiz belongs to.
  * @param questionAnswerId - The ID of the question the learner answered.
  * @param selectedOptionIndex - The index of the option the learner selected.
+ * @returns The selection that now counts for the question, and whether this call recorded it.
  */
 export async function recordQuizSelection(
   userId: string,
   learningUnitId: string,
   questionAnswerId: string,
   selectedOptionIndex: number,
-): Promise<void> {
+): Promise<RecordedQuizSelection> {
   const key = buildAttemptKey(userId, learningUnitId);
 
-  await valkey.hset(key, { [questionAnswerId]: selectedOptionIndex.toString() });
-  await valkey.expire(key, QUIZ_ATTEMPT_TTL);
+  const isFirstSelection = await valkey.hsetnx(
+    key,
+    questionAnswerId,
+    selectedOptionIndex.toString(),
+  );
+  if (isFirstSelection) {
+    await valkey.expire(key, QUIZ_ATTEMPT_TTL);
+    return { selectedOptionIndex, isFirstSelection: true };
+  }
+
+  // The question already holds a selection, so report that one. Feedback built from the submitted
+  // index would describe an answer the grade ignores.
+  const recorded = await valkey.hget(key, questionAnswerId);
+  const recordedOptionIndex = Number(recorded?.toString());
+
+  return {
+    selectedOptionIndex: Number.isInteger(recordedOptionIndex)
+      ? recordedOptionIndex
+      : selectedOptionIndex,
+    isFirstSelection: false,
+  };
 }
 
 /**
