@@ -1,8 +1,10 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 
 import { learnerAuth } from '$lib/server/auth';
-import { createChatStreamResponse } from '$lib/server/chat';
+import { CHAT_RATE_LIMIT_NAMESPACE, chatLimits, createChatStreamResponse } from '$lib/server/chat';
 import { db, type MessageFindManyArgs, type MessageGetPayload } from '$lib/server/db.js';
+import { consumeFixedWindow, type RateLimitDecision } from '$lib/server/ratelimit';
+import { valkey } from '$lib/server/valkey.js';
 
 import type { JSONObject } from '../types';
 
@@ -57,6 +59,34 @@ export const POST: RequestHandler = async (event) => {
   if (!isValidCSRFToken) {
     logger.warn('CSRF token is invalid');
     return json(null, { status: 400 });
+  }
+
+  // Count the request before parsing the body, so a flood is rejected on the cheapest possible path.
+  let decision: RateLimitDecision;
+  try {
+    decision = await consumeFixedWindow(valkey, {
+      namespace: CHAT_RATE_LIMIT_NAMESPACE,
+      identifier: user.id,
+      limit: chatLimits.maxRequests,
+      windowSeconds: chatLimits.windowSeconds,
+    });
+  } catch (err) {
+    // Fail closed: the limiter guards third-party spend, so an unreadable counter must not become an
+    // unlimited allowance. Valkey already holds the session, so a learner cannot reach here with it
+    // down anyway.
+    logger.error({ err, userId: user.id }, 'Failed to apply the request rate limit');
+    return json(null, { status: 503 });
+  }
+
+  if (!decision.allowed) {
+    logger.warn(
+      { userId: user.id, retryAfterSeconds: decision.retryAfterSeconds },
+      'Request rate limit exceeded',
+    );
+    return json(null, {
+      status: 429,
+      headers: { 'Retry-After': String(decision.retryAfterSeconds) },
+    });
   }
 
   let params: JSONObject;
