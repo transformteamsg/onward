@@ -26,11 +26,15 @@ vi.mock('$env/dynamic/public', () => ({
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-global.IntersectionObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-}));
+// Must be a function expression, not an arrow: the component calls
+// `new IntersectionObserver(…)`, and Vitest 4 constructs the mock implementation directly.
+global.IntersectionObserver = vi.fn().mockImplementation(function () {
+  return {
+    observe: vi.fn(),
+    unobserve: vi.fn(),
+    disconnect: vi.fn(),
+  };
+});
 
 Element.prototype.scrollTo = vi.fn();
 

@@ -8,7 +8,11 @@ const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 
 vi.mock('openai', () => ({
-  default: vi.fn(() => ({ chat: { completions: { create: mockCreate } } })),
+  // Must be a function expression, not an arrow: the client is built with `new OpenAI(…)`,
+  // and Vitest 4 constructs the mock implementation directly.
+  default: vi.fn(function () {
+    return { chat: { completions: { create: mockCreate } } };
+  }),
 }));
 
 const silentLogger = {

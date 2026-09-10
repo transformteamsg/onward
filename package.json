@@ -43,7 +43,7 @@
     "@testing-library/svelte": "^5.4.2",
     "@testing-library/user-event": "^14.6.6",
     "@types/node": "^24.13.3",
-    "@vitest/coverage-v8": "^3.2.7",
+    "@vitest/coverage-v8": "^4.1.11",
     "date-fns": "^4.4.0",
     "dompurify": "^3.4.14",
     "dotenv": "^17.4.2",
@@ -71,16 +71,15 @@
     "typescript-eslint": "^8.69.0",
     "uuid": "^14.0.2",
     "vite": "^7.3.6",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   },
   "pnpm": {
     "overrides": {
       "cookie": "0.7.2",
       "deepmerge-ts": "8.0.0",
-      "esrap": "2.2.11",
       "exceljs>uuid": "11.1.1",
       "mysql2": "3.23.1",
-      "sharp": "0.35.0"
+      "sharp": "0.35.4"
     }
   }
 }
