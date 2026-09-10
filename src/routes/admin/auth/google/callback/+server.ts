@@ -7,6 +7,7 @@ import {
   verifyIdToken,
 } from '$lib/server/auth/index.js';
 import { db, type UserAdminFindUniqueArgs, type UserAdminGetPayload } from '$lib/server/db.js';
+import { resolveReturnTo } from '$lib/server/return-to.js';
 
 import type { RequestHandler } from './$types';
 
@@ -114,7 +115,7 @@ export const GET: RequestHandler = async (event) => {
   }
 
   const rawState = JSON.parse(Buffer.from(state, 'base64url').toString('utf-8'));
-  const returnTo = rawState['return_to'] || '/admin';
+  const returnTo = resolveReturnTo(rawState['return_to'], '/admin');
 
   logger.info({ email: userAdmin.email }, 'Successfully signed in admin');
 
