@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.16.1 (2026-09-10)
+
+### Bug Fixes 🐛
+
+- fix(`unit`): empty sources array bypasses the minimum-one-source rule when publishing ([#642](https://github.com/transformteamsg/onward/pull/642)) ([90a4da8](https://github.com/transformteamsg/onward/commit/90a4da8))
+- fix(`admin`): unbounded pageSize query parameter is passed directly to Prisma take ([#641](https://github.com/transformteamsg/onward/pull/641)) ([b20b78f](https://github.com/transformteamsg/onward/commit/b20b78f))
+- fix(`auth`): logout is a state-changing GET with no CSRF validation ([#637](https://github.com/transformteamsg/onward/pull/637)) ([ab594d8](https://github.com/transformteamsg/onward/commit/ab594d8))
+- fix(`api`): subscribe and onboarding endpoints require a csrfToken but never validate it ([#635](https://github.com/transformteamsg/onward/pull/635)) ([cbb2316](https://github.com/transformteamsg/onward/commit/cbb2316))
+- fix(`auth`): OAuth callbacks redirect to unvalidated return_to allowing open redirect ([#634](https://github.com/transformteamsg/onward/pull/634)) ([faa2048](https://github.com/transformteamsg/onward/commit/faa2048))
+- fix(`api`): learning journey checkpoint endpoint accepts client-supplied isCompleted ([#633](https://github.com/transformteamsg/onward/pull/633)) ([b724e3a](https://github.com/transformteamsg/onward/commit/b724e3a))
+- fix(`quiz`): server records client-supplied isQuizPassed instead of grading answers ([#632](https://github.com/transformteamsg/onward/pull/632)) ([7c87c1a](https://github.com/transformteamsg/onward/commit/7c87c1a))
+- fix(`unit`): javascript: URLs pass source URL validation and render into a live href ([#631](https://github.com/transformteamsg/onward/pull/631)) ([ac044c1](https://github.com/transformteamsg/onward/commit/ac044c1))
+- fix(`hooks`): admin guard skipped for URL-encoded admin paths because dispatch reads the raw pathname ([#630](https://github.com/transformteamsg/onward/pull/630)) ([bf2e953](https://github.com/transformteamsg/onward/commit/bf2e953))
+- fix(`ci`): PR title interpolated into release.yaml run block allows command injection ([#629](https://github.com/transformteamsg/onward/pull/629)) ([26eba14](https://github.com/transformteamsg/onward/commit/26eba14))
+- fix(`auth`): learner session accepted as admin via shared session namespace and missing admin identity check ([#628](https://github.com/transformteamsg/onward/pull/628)) ([be49758](https://github.com/transformteamsg/onward/commit/be49758))
+- fix(docker): add dedicated migrate image stage ([#627](https://github.com/transformteamsg/onward/pull/627)) ([99cd861](https://github.com/transformteamsg/onward/commit/99cd861))
+
+### Chores 🧹
+
+- chore: update vulnerable dependencies ([#644](https://github.com/transformteamsg/onward/pull/644)) ([9f0db20](https://github.com/transformteamsg/onward/commit/9f0db20))
+- chore(`auth`): bind Google ID token verification to the OAuth client audience ([#643](https://github.com/transformteamsg/onward/pull/643)) ([36d8bfb](https://github.com/transformteamsg/onward/commit/36d8bfb))
+- chore(`docker`): verify checksums for pnpm binary and RDS CA bundle downloaded in the image build ([#640](https://github.com/transformteamsg/onward/pull/640)) ([ca59e8c](https://github.com/transformteamsg/onward/commit/ca59e8c))
+- chore(`cache`): bound the avatar fetch with a timeout, size cap, and host allowlist ([#639](https://github.com/transformteamsg/onward/pull/639)) ([14440bb](https://github.com/transformteamsg/onward/commit/14440bb))
+- chore(`config`): drop the hardcoded POSTGRES_URL fallback and fail fast when it is unset ([#638](https://github.com/transformteamsg/onward/pull/638)) ([b08d6f8](https://github.com/transformteamsg/onward/commit/b08d6f8))
+- chore(`api`): add per-user rate limiting to the OpenAI-backed messages endpoint ([#636](https://github.com/transformteamsg/onward/pull/636)) ([2b427d2](https://github.com/transformteamsg/onward/commit/2b427d2))
+- chore: update vulnerable dependencies ([#610](https://github.com/transformteamsg/onward/pull/610)) ([81af3ec](https://github.com/transformteamsg/onward/commit/81af3ec))
+
 ## 1.16.0 (2026-07-01)
 
 ### Features ✨
