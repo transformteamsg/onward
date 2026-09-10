@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 
+import { learnerAuth } from '$lib/server/auth';
 import { db } from '$lib/server/db';
 
 import type { RequestHandler } from './$types';
@@ -35,6 +36,12 @@ export const POST: RequestHandler = async (event) => {
   } catch (err) {
     logger.error({ err, userId: user.id }, 'Failed to parse request body');
     return json(null, { status: 400 });
+  }
+
+  const isValidCSRFToken = await learnerAuth.validateCSRFToken(event, params.csrfToken);
+  if (!isValidCSRFToken) {
+    logger.warn('CSRF token is invalid');
+    return json(null, { status: 403 });
   }
 
   const { isSubscribed } = params;

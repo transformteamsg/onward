@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { POST } from './+server.js';
 
-const { mockFindMany, mockCreate } = vi.hoisted(() => ({
+const { mockFindMany, mockCreate, mockValidateCSRFToken } = vi.hoisted(() => ({
   mockFindMany: vi.fn(),
   mockCreate: vi.fn(),
+  mockValidateCSRFToken: vi.fn(),
 }));
 
 vi.mock('$lib/server/db', () => ({
@@ -12,6 +13,10 @@ vi.mock('$lib/server/db', () => ({
     collection: { findMany: mockFindMany },
     userProfile: { create: mockCreate },
   },
+}));
+
+vi.mock('$lib/server/auth', () => ({
+  learnerAuth: { validateCSRFToken: mockValidateCSRFToken },
 }));
 
 const silentLogger = {
@@ -54,6 +59,7 @@ const buildEvent = ({
 beforeEach(() => {
   vi.clearAllMocks();
   silentLogger.child.mockReturnValue(silentLogger);
+  mockValidateCSRFToken.mockResolvedValue(true);
 });
 
 describe('POST /api/onboarding', () => {
@@ -128,6 +134,25 @@ describe('POST /api/onboarding', () => {
     const response = await POST(event);
 
     expect(response.status).toBe(422);
+    expect(mockValidateCSRFToken).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  test('returns 403 and writes nothing when the csrfToken does not validate', async () => {
+    mockValidateCSRFToken.mockResolvedValue(false);
+    const event = buildEvent({
+      body: {
+        collectionIds: ['c1', 'c2', 'c3'],
+        frequency: 'QUICK',
+        csrfToken: 'not-a-real-token',
+      },
+    });
+
+    const response = await POST(event);
+
+    expect(response.status).toBe(403);
+    expect(mockValidateCSRFToken).toHaveBeenCalledWith(event, 'not-a-real-token');
+    expect(mockFindMany).not.toHaveBeenCalled();
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
