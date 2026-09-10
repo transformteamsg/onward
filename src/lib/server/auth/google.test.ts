@@ -10,11 +10,15 @@ const mockGenerateAuthUrl = vi.fn();
 const mockGetToken = vi.fn();
 vi.mock('google-auth-library', () => ({
   CodeChallengeMethod: { S256: 'S256' },
-  OAuth2Client: vi.fn().mockImplementation(() => ({
-    verifyIdToken: mockVerifyIdToken,
-    generateAuthUrl: mockGenerateAuthUrl,
-    getToken: mockGetToken,
-  })),
+  // Must be a function expression, not an arrow: google.ts calls `new OAuth2Client(…)`,
+  // and Vitest 4 constructs the mock implementation directly.
+  OAuth2Client: vi.fn().mockImplementation(function () {
+    return {
+      verifyIdToken: mockVerifyIdToken,
+      generateAuthUrl: mockGenerateAuthUrl,
+      getToken: mockGetToken,
+    };
+  }),
 }));
 
 function payloadWithHd(hd: string | undefined) {

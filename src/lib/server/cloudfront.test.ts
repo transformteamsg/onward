@@ -18,7 +18,9 @@ vi.mock('$env/dynamic/private', () => ({
 
 describe('getCloudFrontSignedCookies', () => {
   afterEach(() => {
-    vi.restoreAllMocks();
+    // `restoreAllMocks` only restores `vi.spyOn` spies in Vitest 4; it no longer clears
+    // `vi.fn()` call history. Reset instead, so each test reads its own `mock.calls[0]`.
+    vi.resetAllMocks();
   });
 
   test('returns signed cookies built from a custom policy', async () => {
