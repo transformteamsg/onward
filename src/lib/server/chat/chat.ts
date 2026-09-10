@@ -13,6 +13,13 @@ export interface ChatStreamOptions {
   query: string;
   history: ChatHistory;
   logger: Logger;
+  /**
+   * Called exactly once when generation has stopped, on every path: graceful completion, error, and
+   * client disconnect. Lets the caller free a resource it reserved for the turn before the stream
+   * started, such as a concurrency slot. A throw is logged and swallowed, so the callback can never
+   * break the response.
+   */
+  onSettled?: () => Promise<void>;
 }
 
 /**
@@ -166,17 +173,49 @@ function createChatStream(params: ChatStreamOptions): ReadableStream<ChatChunk> 
   });
   return new ReadableStream<ChatChunk>({
     async start(controller) {
-      for await (const chunk of stream) {
-        try {
-          controller.enqueue(chunk);
-        } catch {
-          // Client disconnected; keep draining so persistence still runs.
+      let settled = false;
+      // Settles at most once, and — unlike waiting for the whole generator, whose `finally` sits
+      // behind `withOnFinish`'s `await onFinish` — independently of whether persistence has
+      // finished. A resource the caller reserved for this turn (a concurrency slot) should free the
+      // moment generation reaches a terminal chunk, not stay held while the DB write is pending.
+      const settleOnce = async () => {
+        if (settled) {
+          return;
         }
-      }
+        settled = true;
+        if (params.onSettled) {
+          try {
+            await params.onSettled();
+          } catch (err) {
+            params.logger.error({ err, userId: params.userId }, 'Failed to settle the chat stream');
+          }
+        }
+      };
+      // The close and the settle callback sit in `finally` too, so a throw from the generator still
+      // closes the stream and still frees whatever the caller reserved for this turn.
       try {
-        controller.close();
-      } catch {
-        // Already closed.
+        for await (const chunk of stream) {
+          try {
+            controller.enqueue(chunk);
+          } catch {
+            // Client disconnected; keep draining so persistence still runs.
+          }
+          if (chunk.type === 'done' || chunk.type === 'error') {
+            // Enqueuing this chunk happens before `stream`'s next pull, which is what triggers
+            // `withOnFinish`'s `await onFinish` on a `done` chunk -- so settling here can never be
+            // delayed by persistence.
+            await settleOnce();
+          }
+        }
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          // Already closed.
+        }
+        // Safety net for an exit path with no terminal chunk (e.g. the generator throws instead of
+        // yielding `error`); the common paths above already settled by this point.
+        await settleOnce();
       }
     },
   });

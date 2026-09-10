@@ -553,6 +553,145 @@ describe('createChatStreamResponse — client disconnect', () => {
   });
 });
 
+describe('createChatStreamResponse — onSettled', () => {
+  test('fires once after a graceful completion', async () => {
+    const onSettled = vi.fn(async () => undefined);
+    mockCreate.mockResolvedValueOnce(streamChunks(['answer']));
+    mockSearch.mockResolvedValueOnce([hit('hit')]);
+    mockTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
+      await cb({
+        thread: { findFirst: mockThreadFindFirst, create: mockThreadCreate },
+        message: { createMany: mockMessageCreateMany },
+      });
+    });
+    mockThreadFindFirst.mockResolvedValueOnce({ id: 'thread-1' });
+
+    const response = createChatStreamResponse({
+      userId: 'u',
+      query: 'q',
+      history: [],
+      logger: silentLogger,
+      onSettled,
+    });
+    await readAll(response.body);
+
+    await vi.waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
+  });
+
+  test('fires after the stream ends in error', async () => {
+    const onSettled = vi.fn(async () => undefined);
+    mockSearch.mockRejectedValueOnce(new Error('weaviate timeout'));
+
+    const response = createChatStreamResponse({
+      userId: 'u',
+      query: 'q',
+      history: [],
+      logger: silentLogger,
+      onSettled,
+    });
+    await readAll(response.body);
+
+    await vi.waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
+  });
+
+  test('fires after the reader cancels mid-stream', async () => {
+    const onSettled = vi.fn(async () => undefined);
+    mockCreate.mockResolvedValueOnce(streamChunks(['Photo', 'synthesis']));
+    mockSearch.mockResolvedValueOnce([hit('hit')]);
+    mockTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
+      await cb({
+        thread: { findFirst: mockThreadFindFirst, create: mockThreadCreate },
+        message: { createMany: mockMessageCreateMany },
+      });
+    });
+    mockThreadFindFirst.mockResolvedValueOnce({ id: 'thread-1' });
+
+    const response = createChatStreamResponse({
+      userId: 'u',
+      query: 'q',
+      history: [],
+      logger: silentLogger,
+      onSettled,
+    });
+    const body = response.body;
+    if (body === null) {
+      throw new Error('expected a response body');
+    }
+    const reader = body.getReader();
+    await reader.read();
+    await reader.cancel();
+
+    await vi.waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
+  });
+
+  test('fires as soon as generation reaches [DONE], before persistence resolves', async () => {
+    const onSettled = vi.fn(async () => undefined);
+    mockCreate.mockResolvedValueOnce(streamChunks(['answer']));
+    mockSearch.mockResolvedValueOnce([hit('hit')]);
+    let releasePersistence: (() => void) | undefined;
+    mockTransaction.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releasePersistence = resolve;
+        }),
+    );
+
+    const response = createChatStreamResponse({
+      userId: 'u',
+      query: 'q',
+      history: [],
+      logger: silentLogger,
+      onSettled,
+    });
+    const body = response.body;
+    if (body === null) {
+      throw new Error('expected a response body');
+    }
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let sawDone = false;
+    while (!sawDone) {
+      const { value, done } = await reader.read();
+      if (done) {
+        throw new Error('stream closed before persistence resolved');
+      }
+      sawDone = decoder.decode(value).includes('[DONE]');
+    }
+
+    await vi.waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
+    expect(mockMessageCreateMany).not.toHaveBeenCalled();
+
+    releasePersistence?.();
+    await reader.cancel();
+  });
+
+  test('logs and swallows a throw from the callback', async () => {
+    const onSettled = vi.fn(async () => {
+      throw new Error('valkey down');
+    });
+    mockSearch.mockRejectedValueOnce(new Error('weaviate timeout'));
+
+    const response = createChatStreamResponse({
+      userId: 'u',
+      query: 'q',
+      history: [],
+      logger: silentLogger,
+      onSettled,
+    });
+    const events = await readAll(response.body);
+
+    expect(events).toContainEqual(
+      `data: ${JSON.stringify({ type: 'error', message: 'Service error' })}\n\n`,
+    );
+    await vi.waitFor(() =>
+      expect(silentLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'u' }),
+        'Failed to settle the chat stream',
+      ),
+    );
+  });
+});
+
 describe('saveTurn', () => {
   test('creates a new thread when none is active, then writes both messages', async () => {
     mockTransaction.mockImplementation(async (cb: (tx: unknown) => Promise<void>) => {
