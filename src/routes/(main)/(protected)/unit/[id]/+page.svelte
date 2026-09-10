@@ -190,7 +190,7 @@
         lastCheckpoint: 0,
         learningUnitContentId: videoContent.id,
         csrfToken: data.csrfToken,
-        isCompleted: !data.isQuizAvailable,
+        hasReachedEnd: true,
       }),
     });
     trackVideoCompletion(data.id);
