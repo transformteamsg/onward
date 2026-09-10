@@ -87,7 +87,7 @@
   };
 
   onMount(() => {
-    const updateLearningJourney = async (progress: number, isQuizAvailable?: boolean) => {
+    const updateLearningJourney = async (progress: number, hasReachedEnd = false) => {
       await fetch('/api/learningjourney', {
         method: 'POST',
         headers: {
@@ -98,7 +98,7 @@
           lastCheckpoint: progress,
           learningUnitContentId: player.currentTrack?.learningUnitContentId,
           csrfToken: (page.data as LayoutData).csrfToken,
-          ...(isQuizAvailable !== undefined && { isCompleted: isQuizAvailable }),
+          hasReachedEnd,
         }),
       });
     };
@@ -113,7 +113,7 @@
 
     const handleEnded = async () => {
       if (isTrackingSession) {
-        await updateLearningJourney(0, !isQuizAvailable);
+        await updateLearningJourney(0, true);
         await invalidateAll();
       }
 

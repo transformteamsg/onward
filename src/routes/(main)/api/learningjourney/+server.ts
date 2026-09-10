@@ -3,9 +3,12 @@ import { json } from '@sveltejs/kit';
 import { learnerAuth } from '$lib/server/auth';
 import {
   db,
-  type LearningJourneyFindUniqueArgs,
   type LearningJourneyGetPayload,
   type LearningJourneyUpsertArgs,
+  type LearningUnitContentFindFirstArgs,
+  type LearningUnitContentGetPayload,
+  LearningUnitStatus,
+  type QuestionAnswerCountArgs,
 } from '$lib/server/db.js';
 
 import type { JSONObject } from '../types';
@@ -37,7 +40,8 @@ export const POST: RequestHandler = async (event) => {
       !('learningUnitContentId' in params) ||
       typeof params['learningUnitContentId'] !== 'string' ||
       !('csrfToken' in params) ||
-      typeof params['csrfToken'] !== 'string'
+      typeof params['csrfToken'] !== 'string' ||
+      ('hasReachedEnd' in params && typeof params['hasReachedEnd'] !== 'boolean')
     ) {
       return json(null, { status: 422 });
     }
@@ -55,26 +59,56 @@ export const POST: RequestHandler = async (event) => {
   const learningUnitId = params.id as string;
   const lastCheckpoint = params.lastCheckpoint as number;
   const learningUnitContentId = params.learningUnitContentId as string;
-  const isCompleted =
-    'isCompleted' in params && typeof params.isCompleted === 'boolean'
-      ? params.isCompleted
-      : undefined;
+  const hasReachedEnd = params.hasReachedEnd === true;
 
-  const findUniqueArgs = {
-    select: { isCompleted: true },
-    where: { userId_learningUnitId: { userId: user.id, learningUnitId } },
-  } satisfies LearningJourneyFindUniqueArgs;
+  const learningUnitContentArgs = {
+    select: { id: true },
+    where: {
+      id: learningUnitContentId,
+      learningUnitId,
+      learningUnit: { status: LearningUnitStatus.PUBLISHED },
+    },
+  } satisfies LearningUnitContentFindFirstArgs;
+
+  let learningUnitContent: LearningUnitContentGetPayload<typeof learningUnitContentArgs> | null;
+  try {
+    learningUnitContent = await db.learningUnitContent.findFirst(learningUnitContentArgs);
+  } catch (err) {
+    logger.error({ err }, 'Failed to retrieve learning unit content');
+    return json(null, { status: 500 });
+  }
+
+  if (!learningUnitContent) {
+    logger.warn(
+      { userId: user.id, learningUnitId, learningUnitContentId },
+      'Content does not belong to a published learning unit',
+    );
+    return json(null, { status: 404 });
+  }
+
+  // Completion is derived here, never read from the request body. A unit that has a quiz
+  // completes only when the learner passes that quiz, which the quiz page owns.
+  const questionAnswerCountArgs = {
+    where: { learningUnitId },
+  } satisfies QuestionAnswerCountArgs;
+
+  let isCompleted = false;
+  if (hasReachedEnd) {
+    try {
+      isCompleted = (await db.questionAnswer.count(questionAnswerCountArgs)) === 0;
+    } catch (err) {
+      logger.error({ err }, 'Failed to retrieve quiz records');
+      return json(null, { status: 500 });
+    }
+  }
+
+  const update: { isCompleted?: boolean } = {};
+  if (isCompleted) {
+    update.isCompleted = true;
+  }
 
   try {
     await db.$transaction(async (tx) => {
-      const existing: LearningJourneyGetPayload<typeof findUniqueArgs> | null =
-        await tx.learningJourney.findUnique(findUniqueArgs);
-
-      const update: { isCompleted?: boolean } = {};
-      if (isCompleted !== undefined && !(existing && existing.isCompleted)) {
-        update.isCompleted = isCompleted;
-      }
-
       const learningJourneyArgs = {
         where: {
           userId_learningUnitId: { userId: user.id, learningUnitId },
@@ -83,7 +117,7 @@ export const POST: RequestHandler = async (event) => {
         create: {
           userId: user.id,
           learningUnitId,
-          isCompleted: false,
+          isCompleted,
         },
         select: { id: true },
       } satisfies LearningJourneyUpsertArgs;
