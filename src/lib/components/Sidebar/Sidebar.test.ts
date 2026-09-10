@@ -17,6 +17,7 @@ describe('Sidebar', () => {
         title: 'Test Admin',
         currentPath: '/admin',
         navItems: mockNavItems,
+        csrfToken: 'csrf-token',
       },
     });
     expect(screen.getByText('Test Admin')).toBeInTheDocument();
@@ -28,6 +29,7 @@ describe('Sidebar', () => {
         title: 'Test Admin',
         currentPath: '/admin',
         navItems: mockNavItems,
+        csrfToken: 'csrf-token',
       },
     });
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
@@ -41,6 +43,7 @@ describe('Sidebar', () => {
         title: 'Test Admin',
         currentPath: '/admin/settings',
         navItems: mockNavItems,
+        csrfToken: 'csrf-token',
       },
     });
 
@@ -56,6 +59,7 @@ describe('Sidebar', () => {
         title: 'Test Admin',
         currentPath: '/admin/settings',
         navItems: mockNavItems,
+        csrfToken: 'csrf-token',
       },
     });
 
@@ -65,28 +69,39 @@ describe('Sidebar', () => {
     expect(dashboardLink).not.toHaveClass('bg-slate-100');
   });
 
-  test('renders logout link', () => {
+  test('renders logout button', () => {
     render(Sidebar, {
       props: {
         title: 'Test Admin',
         currentPath: '/admin',
         navItems: mockNavItems,
+        csrfToken: 'csrf-token',
       },
     });
     expect(screen.getByText('Logout')).toBeInTheDocument();
   });
 
-  test('logout link has correct href', () => {
-    render(Sidebar, {
+  // Sign-out changes state, so it must be a POST that carries the CSRF token. A logout link would
+  // let a cross-site top-level navigation end the session.
+  test('logout is a POST form to /admin/logout that submits the CSRF token', () => {
+    const { container } = render(Sidebar, {
       props: {
         title: 'Test Admin',
         currentPath: '/admin',
         navItems: mockNavItems,
+        csrfToken: 'csrf-token',
       },
     });
 
-    const logoutLink = screen.getByText('Logout').closest('a');
-    expect(logoutLink).toHaveAttribute('href', '/admin/logout');
+    const logoutForm = screen.getByText('Logout').closest('form');
+    expect(logoutForm).toHaveAttribute('method', 'POST');
+    expect(logoutForm).toHaveAttribute('action', '/admin/logout');
+    expect(screen.getByText('Logout').closest('a')).toBeNull();
+
+    const csrfInput = logoutForm?.querySelector('input[name="csrfToken"]');
+    expect(csrfInput).toHaveAttribute('type', 'hidden');
+    expect(csrfInput).toHaveValue('csrf-token');
+    expect(container.querySelector('a[href="/admin/logout"]')).toBeNull();
   });
 
   test('navigation items have correct hrefs', () => {
@@ -95,6 +110,7 @@ describe('Sidebar', () => {
         title: 'Test Admin',
         currentPath: '/admin',
         navItems: mockNavItems,
+        csrfToken: 'csrf-token',
       },
     });
 
@@ -113,6 +129,7 @@ describe('Sidebar', () => {
         title: 'Test Admin',
         currentPath: '/admin',
         navItems: mockNavItems,
+        csrfToken: 'csrf-token',
       },
     });
 
