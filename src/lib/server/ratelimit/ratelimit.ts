@@ -180,6 +180,14 @@ export async function acquireConcurrencySlot(
 
   if (inFlight > options.limit) {
     await valkey.decr(key);
+    // Arm the lease only when the key has none, which repairs a key left without one by a process
+    // that died between the increment and the expiry. `HasNoExpiry` makes this a no-op while a
+    // crashed holder's lease still runs, so a denied retry cannot re-arm it and defeat the leak
+    // guard. Without this repair a pool of one never recovers, because no later acquire is granted
+    // and nothing else sets the expiry.
+    await valkey.expire(key, options.leaseSeconds, {
+      expireOption: ExpireOptions.HasNoExpiry,
+    });
     return {
       acquired: false,
       // The caller holds nothing, so releasing must not decrement. A no-op keeps `release` safe to

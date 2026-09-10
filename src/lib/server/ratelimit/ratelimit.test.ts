@@ -369,4 +369,29 @@ describe('acquireConcurrencySlot', () => {
 
     expect([first.acquired, second.acquired]).toEqual([true, true]);
   });
+
+  test('arms the lease on a refused acquire when the key has none, so a lost expiry is repaired', async () => {
+    // A process that dies between the increment and the expiry leaves the count raised and the key
+    // without a lease.
+    counters.set('concurrency:test:user-1', 2);
+
+    const refused = await acquireConcurrencySlot(valkey, POOL);
+
+    expect(refused.acquired).toBe(false);
+    expect(expiries.get('concurrency:test:user-1')).toBe(120);
+  });
+
+  test('a pool of one recovers from a lost expiry, which no later grant would repair', async () => {
+    const solo = { ...POOL, limit: 1 };
+    counters.set('concurrency:test:user-1', 1);
+
+    // Every acquire is refused while the phantom holder occupies the only slot, so nothing but this
+    // repair can ever arm the lease.
+    expect((await acquireConcurrencySlot(valkey, solo)).acquired).toBe(false);
+    expect(expiries.get('concurrency:test:user-1')).toBe(120);
+
+    lapse('concurrency:test:user-1');
+
+    expect((await acquireConcurrencySlot(valkey, solo)).acquired).toBe(true);
+  });
 });
