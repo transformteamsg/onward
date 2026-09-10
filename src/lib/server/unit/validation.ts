@@ -394,38 +394,47 @@ export function validateLearningUnit(data: FormData):
 
     if (!Array.isArray(sources)) {
       errors.sources = { message: ERROR_MESSAGES.INVALID_DATA(), items: [] };
-    } else {
-      const sourcesItemErrors: Record<string, string>[] = [];
+      sources = [];
+    } else if (!errors.sources) {
+      if (sources.length === 0) {
+        errors.sources = { message: ERROR_MESSAGES.ARRAY_MIN('Source', 1), items: [] };
+      } else {
+        const sourcesItemErrors: Record<string, string>[] = [];
 
-      for (let i = 0; i < sources.length; i++) {
-        const source = sources[i];
-        const itemError: Record<string, string> = {};
+        for (let i = 0; i < sources.length; i++) {
+          const source = sources[i];
+          const itemError: Record<string, string> = {};
 
-        if (!source.title || typeof source.title !== 'string' || source.title.trim().length === 0) {
-          itemError.title = ERROR_MESSAGES.FIELD_REQUIRED;
+          if (
+            !source.title ||
+            typeof source.title !== 'string' ||
+            source.title.trim().length === 0
+          ) {
+            itemError.title = ERROR_MESSAGES.FIELD_REQUIRED;
+          }
+
+          if (
+            !source.sourceURL ||
+            typeof source.sourceURL !== 'string' ||
+            source.sourceURL.trim().length === 0
+          ) {
+            itemError.sourceURL = ERROR_MESSAGES.FIELD_REQUIRED;
+          } else if (!isSafeHttpURL(source.sourceURL)) {
+            itemError.sourceURL = ERROR_MESSAGES.INVALID_DATA('URL');
+          }
+
+          if (typeof source.tagId !== 'string') {
+            source.tagId = '';
+          }
+
+          if (Object.keys(itemError).length > 0) {
+            sourcesItemErrors[i] = itemError;
+          }
         }
 
-        if (
-          !source.sourceURL ||
-          typeof source.sourceURL !== 'string' ||
-          source.sourceURL.trim().length === 0
-        ) {
-          itemError.sourceURL = ERROR_MESSAGES.FIELD_REQUIRED;
-        } else if (!isSafeHttpURL(source.sourceURL)) {
-          itemError.sourceURL = ERROR_MESSAGES.INVALID_DATA('URL');
+        if (sourcesItemErrors.length > 0) {
+          errors.sources = { message: '', items: sourcesItemErrors };
         }
-
-        if (typeof source.tagId !== 'string') {
-          source.tagId = '';
-        }
-
-        if (Object.keys(itemError).length > 0) {
-          sourcesItemErrors[i] = itemError;
-        }
-      }
-
-      if (sourcesItemErrors.length > 0) {
-        errors.sources = { message: '', items: sourcesItemErrors };
       }
     }
   } else {
