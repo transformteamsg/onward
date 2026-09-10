@@ -6,3 +6,4 @@ export * from './learning-unit-status.js';
 export * from './mapping.js';
 export * from './nanoid.js';
 export * from './noop.js';
+export * from './url.js';
