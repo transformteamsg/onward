@@ -164,3 +164,48 @@ describe('admin route protection', () => {
     },
   );
 });
+
+// `%61` is `a`, so each pathname here decodes to a route under /admin. SvelteKit matches
+// routes on the decoded path, so the root hook sends these requests to this realm. The
+// comparisons below must read the same decoded value the router matched.
+describe('admin route protection compares the decoded pathname', () => {
+  test.each(['/%61dmin/login', '/%61dmin/auth/google', '/%61dmin/auth/google/callback'])(
+    'exempts %s, which resolves to an exempt route',
+    async (pathname) => {
+      const { resolve, result } = await run(pathname, null);
+
+      await expect(result).resolves.toBeInstanceOf(Response);
+      expect(resolve).toHaveBeenCalledOnce();
+      expect(mockFindUnique).not.toHaveBeenCalled();
+    },
+  );
+
+  test('redirects an unauthenticated request for an encoded admin route', async () => {
+    const { resolve, result } = await run('/%61dmin/unit/new', null);
+
+    await expect(result).rejects.toMatchObject({ status: 303, location: '/admin/login' });
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  test('denies a learner session that reaches an encoded admin route', async () => {
+    mockFindUnique.mockResolvedValue(null);
+
+    const { resolve, result } = await run('/%61dmin/unit/new', learner);
+
+    await expect(result).rejects.toMatchObject({
+      status: 303,
+      location: '/admin/login?error=unauthorized',
+    });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(mockSignOut).toHaveBeenCalledOnce();
+  });
+
+  test('lets an active UserAdmin through an encoded admin route', async () => {
+    mockFindUnique.mockResolvedValue({ ...activeAdmin });
+
+    const { resolve, result } = await run('/%61dmin/unit/new', activeAdmin);
+
+    await expect(result).resolves.toBeInstanceOf(Response);
+    expect(resolve).toHaveBeenCalledOnce();
+  });
+});
