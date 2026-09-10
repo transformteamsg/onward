@@ -173,7 +173,25 @@ function createChatStream(params: ChatStreamOptions): ReadableStream<ChatChunk> 
   });
   return new ReadableStream<ChatChunk>({
     async start(controller) {
-      // The close and the settle callback sit in `finally`, so a throw from the generator still
+      let settled = false;
+      // Settles at most once, and — unlike waiting for the whole generator, whose `finally` sits
+      // behind `withOnFinish`'s `await onFinish` — independently of whether persistence has
+      // finished. A resource the caller reserved for this turn (a concurrency slot) should free the
+      // moment generation reaches a terminal chunk, not stay held while the DB write is pending.
+      const settleOnce = async () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (params.onSettled) {
+          try {
+            await params.onSettled();
+          } catch (err) {
+            params.logger.error({ err, userId: params.userId }, 'Failed to settle the chat stream');
+          }
+        }
+      };
+      // The close and the settle callback sit in `finally` too, so a throw from the generator still
       // closes the stream and still frees whatever the caller reserved for this turn.
       try {
         for await (const chunk of stream) {
@@ -182,6 +200,12 @@ function createChatStream(params: ChatStreamOptions): ReadableStream<ChatChunk> 
           } catch {
             // Client disconnected; keep draining so persistence still runs.
           }
+          if (chunk.type === 'done' || chunk.type === 'error') {
+            // Enqueuing this chunk happens before `stream`'s next pull, which is what triggers
+            // `withOnFinish`'s `await onFinish` on a `done` chunk -- so settling here can never be
+            // delayed by persistence.
+            await settleOnce();
+          }
         }
       } finally {
         try {
@@ -189,13 +213,9 @@ function createChatStream(params: ChatStreamOptions): ReadableStream<ChatChunk> 
         } catch {
           // Already closed.
         }
-        if (params.onSettled) {
-          try {
-            await params.onSettled();
-          } catch (err) {
-            params.logger.error({ err, userId: params.userId }, 'Failed to settle the chat stream');
-          }
-        }
+        // Safety net for an exit path with no terminal chunk (e.g. the generator throws instead of
+        // yielding `error`); the common paths above already settled by this point.
+        await settleOnce();
       }
     },
   });

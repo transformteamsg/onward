@@ -624,6 +624,47 @@ describe('createChatStreamResponse — onSettled', () => {
     await vi.waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
   });
 
+  test('fires as soon as generation reaches [DONE], before persistence resolves', async () => {
+    const onSettled = vi.fn(async () => undefined);
+    mockCreate.mockResolvedValueOnce(streamChunks(['answer']));
+    mockSearch.mockResolvedValueOnce([hit('hit')]);
+    let releasePersistence: (() => void) | undefined;
+    mockTransaction.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releasePersistence = resolve;
+        }),
+    );
+
+    const response = createChatStreamResponse({
+      userId: 'u',
+      query: 'q',
+      history: [],
+      logger: silentLogger,
+      onSettled,
+    });
+    const body = response.body;
+    if (body === null) {
+      throw new Error('expected a response body');
+    }
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let sawDone = false;
+    while (!sawDone) {
+      const { value, done } = await reader.read();
+      if (done) {
+        throw new Error('stream closed before persistence resolved');
+      }
+      sawDone = decoder.decode(value).includes('[DONE]');
+    }
+
+    await vi.waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
+    expect(mockMessageCreateMany).not.toHaveBeenCalled();
+
+    releasePersistence?.();
+    await reader.cancel();
+  });
+
   test('logs and swallows a throw from the callback', async () => {
     const onSettled = vi.fn(async () => {
       throw new Error('valkey down');

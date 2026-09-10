@@ -1,4 +1,4 @@
-import { ExpireOptions, type GlideClient } from '@valkey/valkey-glide';
+import { ExpireOptions, type GlideClient, Script } from '@valkey/valkey-glide';
 
 /**
  * The options shared by every limiter in this module.
@@ -132,15 +132,31 @@ export async function consumeFixedWindow(
     return { allowed: true, remaining: options.limit - count, retryAfterSeconds: 0 };
   }
 
-  // `ttl` reports -1 for a key with no expiry and -2 for a missing key. Neither is a usable
-  // Retry-After, so fall back to a full window.
+  // `ttl` reports -1 for a key with no expiry and -2 for a missing key; either is a genuine "no
+  // window to wait out" case that falls back to a full window. `0` is a real, valid remainder (the
+  // key is about to lapse), so it must not be folded into that fallback.
   const ttl = await valkey.ttl(key);
 
   return {
     allowed: false,
     remaining: 0,
-    retryAfterSeconds: ttl > 0 ? ttl : options.windowSeconds,
+    retryAfterSeconds: ttl >= 0 ? ttl : options.windowSeconds,
   };
+}
+
+// Atomically decrements the concurrency counter and deletes it once it reaches zero, in one
+// server-side step. A plain `decr` then `del` leaves a window where a concurrent `incr` landing
+// between the two calls gets wiped out by the `del`; running both in one script closes that window.
+const RELEASE_SLOT_SCRIPT = new Script(`
+local remaining = redis.call('DECR', KEYS[1])
+if remaining <= 0 then
+  redis.call('DEL', KEYS[1])
+end
+return remaining
+`);
+
+async function releaseSlotKey(valkey: GlideClient, key: string): Promise<void> {
+  await valkey.invokeScript(RELEASE_SLOT_SCRIPT, { keys: [key] });
 }
 
 /**
@@ -162,9 +178,6 @@ export async function acquireConcurrencySlot(
 
   const inFlight = await valkey.incr(key);
 
-  // Refresh the lease on every acquire, so it always outlives the newest holder.
-  await valkey.expire(key, options.leaseSeconds);
-
   if (inFlight > options.limit) {
     await valkey.decr(key);
     return {
@@ -177,15 +190,19 @@ export async function acquireConcurrencySlot(
     };
   }
 
+  // Refresh the lease only once the slot is actually granted. Refreshing it on a refusal too would
+  // keep re-arming a crashed holder's lease on every denied retry, defeating the leak guard.
+  try {
+    await valkey.expire(key, options.leaseSeconds);
+  } catch (err) {
+    // The lease never got set, so this acquire never happened as far as the pool is concerned. Roll
+    // the increment back rather than leave a phantom holder that a caller has no handle to release.
+    await releaseSlotKey(valkey, key);
+    throw err;
+  }
+
   return {
     acquired: true,
-    release: async () => {
-      // Delete at zero rather than leaving an idle key, which also stops the count drifting
-      // negative if a release ever runs twice.
-      const held = await valkey.decr(key);
-      if (held <= 0) {
-        await valkey.del([key]);
-      }
-    },
+    release: async () => releaseSlotKey(valkey, key),
   };
 }

@@ -159,8 +159,13 @@ export const POST: RequestHandler = async (event) => {
     history = await db.message.findMany(messagesArgs);
   } catch (err) {
     logger.error({ err, userId: user.id }, 'Failed to get chat history');
-    // No stream will be created, so nothing else will ever release the slot.
-    await slot.release();
+    // No stream will be created, so nothing else will ever release the slot. Guard the release
+    // itself: a throw here must not skip the response below and leave the slot held.
+    try {
+      await slot.release();
+    } catch (releaseErr) {
+      logger.error({ err: releaseErr, userId: user.id }, 'Failed to release the concurrency slot');
+    }
     return json(null, { status: 500 });
   }
 

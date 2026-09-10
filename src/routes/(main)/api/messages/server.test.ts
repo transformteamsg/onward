@@ -19,7 +19,8 @@ const { mockFindMany, mockCreateChatStreamResponse, mockValidateCSRFToken, limit
     store: {
       counters: new Map<string, number>(),
       expiries: new Map<string, number>(),
-      failOn: null as string | null,
+      failOn: null as 'incr' | 'expire' | 'invokeScript' | null,
+      failOnPrefix: null as string | null,
     },
   }));
 
@@ -45,7 +46,7 @@ vi.mock('$lib/server/chat', () => ({
 vi.mock('$lib/server/valkey.js', () => ({
   valkey: {
     incr: async (key: string) => {
-      if (store.failOn === 'incr') {
+      if (store.failOn === 'incr' && (!store.failOnPrefix || key.startsWith(store.failOnPrefix))) {
         throw new Error('valkey down');
       }
       const next = (store.counters.get(key) ?? 0) + 1;
@@ -58,6 +59,12 @@ vi.mock('$lib/server/valkey.js', () => ({
       return next;
     },
     expire: async (key: string, seconds: number, options?: { expireOption?: ExpireOptions }) => {
+      if (
+        store.failOn === 'expire' &&
+        (!store.failOnPrefix || key.startsWith(store.failOnPrefix))
+      ) {
+        throw new Error('valkey down');
+      }
       if (!store.counters.has(key)) {
         return false;
       }
@@ -82,6 +89,22 @@ vi.mock('$lib/server/valkey.js', () => ({
         }
       }
       return deleted;
+    },
+    invokeScript: async (_script: unknown, options?: { keys?: string[] }) => {
+      const key = options?.keys?.[0];
+      if (key === undefined) {
+        throw new Error('invokeScript requires a key');
+      }
+      if (store.failOn === 'invokeScript') {
+        throw new Error('valkey down');
+      }
+      const next = (store.counters.get(key) ?? 0) - 1;
+      store.counters.set(key, next);
+      if (next <= 0) {
+        store.counters.delete(key);
+        store.expiries.delete(key);
+      }
+      return next;
     },
   } as unknown as GlideClient,
 }));
@@ -126,6 +149,7 @@ beforeEach(() => {
   store.counters.clear();
   store.expiries.clear();
   store.failOn = null;
+  store.failOnPrefix = null;
   limits.maxRequests = 2;
   limits.windowSeconds = 60;
   limits.maxConcurrentRequests = 2;
@@ -286,6 +310,24 @@ describe('POST /api/messages — concurrency cap', () => {
     expect(next.status).toBe(200);
   });
 
+  test('still returns 500 when the history lookup and the slot release both fail', async () => {
+    limits.maxConcurrentRequests = 1;
+    mockFindMany.mockRejectedValueOnce(new Error('db down'));
+    store.failOn = 'invokeScript';
+
+    const response = await POST(buildEvent());
+
+    expect(response.status).toBe(500);
+    expect(silentLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1' }),
+      'Failed to get chat history',
+    );
+    expect(silentLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1' }),
+      'Failed to release the concurrency slot',
+    );
+  });
+
   test('counts each learner against their own pool', async () => {
     limits.maxConcurrentRequests = 1;
     await POST(buildEvent());
@@ -293,5 +335,20 @@ describe('POST /api/messages — concurrency cap', () => {
     const response = await POST(buildEvent({ user: { id: 'user-2' } }));
 
     expect(response.status).toBe(200);
+  });
+
+  test('returns 503 and streams nothing when the concurrency limiter cannot be read', async () => {
+    store.failOn = 'incr';
+    store.failOnPrefix = 'concurrency:chat:messages';
+
+    const response = await POST(buildEvent());
+
+    expect(response.status).toBe(503);
+    expect(mockCreateChatStreamResponse).not.toHaveBeenCalled();
+    expect(mockFindMany).not.toHaveBeenCalled();
+    expect(silentLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1' }),
+      'Failed to apply the concurrency limit',
+    );
   });
 });

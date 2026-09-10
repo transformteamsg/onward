@@ -10,7 +10,11 @@ const expiries = new Map<string, number>();
  * A Valkey stand-in over the two module-level maps. Every client built from it shares those maps,
  * which is what lets a test assert the cross-process behaviour of the counters.
  */
-function buildClient(): GlideClient {
+interface ClientOverrides {
+  failExpireOnce?: boolean;
+}
+
+function buildClient(overrides: ClientOverrides = {}): GlideClient {
   return {
     incr: async (key: string) => {
       const next = (counters.get(key) ?? 0) + 1;
@@ -23,6 +27,10 @@ function buildClient(): GlideClient {
       return next;
     },
     expire: async (key: string, seconds: number, options?: { expireOption?: ExpireOptions }) => {
+      if (overrides.failExpireOnce) {
+        overrides.failExpireOnce = false;
+        throw new Error('valkey down');
+      }
       if (!counters.has(key)) {
         return false;
       }
@@ -47,6 +55,21 @@ function buildClient(): GlideClient {
         }
       }
       return deleted;
+    },
+    // Mirrors RELEASE_SLOT_SCRIPT's atomic decrement-then-conditional-delete: this stand-in runs
+    // both steps synchronously against the shared maps, so it is atomic by construction here too.
+    invokeScript: async (_script: unknown, options?: { keys?: string[] }) => {
+      const key = options?.keys?.[0];
+      if (key === undefined) {
+        throw new Error('invokeScript requires a key');
+      }
+      const next = (counters.get(key) ?? 0) - 1;
+      counters.set(key, next);
+      if (next <= 0) {
+        counters.delete(key);
+        expiries.delete(key);
+      }
+      return next;
     },
   } as unknown as GlideClient;
 }
@@ -165,6 +188,17 @@ describe('consumeFixedWindow — deny', () => {
     const decision = await consumeFixedWindow(valkey, WINDOW);
 
     expect(decision.retryAfterSeconds).toBe(60);
+  });
+
+  test('reports a near-zero retry delay rather than a full window when the key is about to lapse', async () => {
+    for (let i = 0; i < 3; i += 1) {
+      await consumeFixedWindow(valkey, WINDOW);
+    }
+    expiries.set('ratelimit:test:user-1', 0);
+
+    const decision = await consumeFixedWindow(valkey, WINDOW);
+
+    expect(decision.retryAfterSeconds).toBe(0);
   });
 
   test('keeps denying every further request in the same window', async () => {
@@ -305,5 +339,34 @@ describe('acquireConcurrencySlot', () => {
     const refused = await acquireConcurrencySlot(processB, POOL);
 
     expect(refused.acquired).toBe(false);
+  });
+
+  test('does not refresh the lease on a refused acquire, so a denied retry cannot revive a crashed holder', async () => {
+    await acquireConcurrencySlot(valkey, POOL);
+    await acquireConcurrencySlot(valkey, POOL);
+    expiries.set('concurrency:test:user-1', 3);
+
+    const refused = await acquireConcurrencySlot(valkey, POOL);
+
+    expect(refused.acquired).toBe(false);
+    expect(expiries.get('concurrency:test:user-1')).toBe(3);
+  });
+
+  test('rolls back the increment when the lease refresh fails, leaving no phantom holder', async () => {
+    const failingClient = buildClient({ failExpireOnce: true });
+
+    await expect(acquireConcurrencySlot(failingClient, POOL)).rejects.toThrow('valkey down');
+
+    expect(counters.has('concurrency:test:user-1')).toBe(false);
+  });
+
+  test('a granted slot can still be taken again after a prior acquire on the same key failed its lease refresh', async () => {
+    const failingClient = buildClient({ failExpireOnce: true });
+    await expect(acquireConcurrencySlot(failingClient, POOL)).rejects.toThrow('valkey down');
+
+    const first = await acquireConcurrencySlot(valkey, POOL);
+    const second = await acquireConcurrencySlot(valkey, POOL);
+
+    expect([first.acquired, second.acquired]).toEqual([true, true]);
   });
 });
