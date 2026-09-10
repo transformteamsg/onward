@@ -108,6 +108,15 @@ export const POST: RequestHandler = async (event) => {
 
   const query = params['query'];
 
+  // Bound the prompt before any model or search call, so an oversized body costs nothing downstream.
+  if (query.length > chatLimits.maxQueryLength) {
+    logger.warn(
+      { userId: user.id, queryLength: query.length, maxQueryLength: chatLimits.maxQueryLength },
+      'Query exceeds the maximum accepted length',
+    );
+    return json(null, { status: 413 });
+  }
+
   const messagesArgs = {
     select: { role: true, content: true },
     where: { thread: { userId: user.id, isActive: true } },

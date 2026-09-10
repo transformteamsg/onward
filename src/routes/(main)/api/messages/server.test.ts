@@ -11,6 +11,7 @@ const { mockFindMany, mockCreateChatStreamResponse, mockValidateCSRFToken, limit
     limits: {
       maxRequests: 2,
       windowSeconds: 60,
+      maxQueryLength: 50,
     },
     store: {
       counters: new Map<string, number>(),
@@ -123,6 +124,7 @@ beforeEach(() => {
   store.failOn = null;
   limits.maxRequests = 2;
   limits.windowSeconds = 60;
+  limits.maxQueryLength = 50;
   mockValidateCSRFToken.mockResolvedValue(true);
   mockFindMany.mockResolvedValue([]);
   mockCreateChatStreamResponse.mockReturnValue(new Response(null, { status: 200 }));
@@ -211,5 +213,25 @@ describe('POST /api/messages — request rate limit', () => {
       expect.objectContaining({ userId: 'user-1' }),
       'Failed to apply the request rate limit',
     );
+  });
+});
+
+describe('POST /api/messages — prompt size bound', () => {
+  test('returns 413 and makes no model, search, or history call for an oversized prompt', async () => {
+    mockRequestJson.mockResolvedValue({ query: 'x'.repeat(51) });
+
+    const response = await POST(buildEvent());
+
+    expect(response.status).toBe(413);
+    expect(mockCreateChatStreamResponse).not.toHaveBeenCalled();
+    expect(mockFindMany).not.toHaveBeenCalled();
+  });
+
+  test('accepts a prompt exactly at the maximum length', async () => {
+    mockRequestJson.mockResolvedValue({ query: 'x'.repeat(50) });
+
+    const response = await POST(buildEvent());
+
+    expect(response.status).toBe(200);
   });
 });
