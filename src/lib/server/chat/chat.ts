@@ -13,6 +13,13 @@ export interface ChatStreamOptions {
   query: string;
   history: ChatHistory;
   logger: Logger;
+  /**
+   * Called exactly once when generation has stopped, on every path: graceful completion, error, and
+   * client disconnect. Lets the caller free a resource it reserved for the turn before the stream
+   * started, such as a concurrency slot. A throw is logged and swallowed, so the callback can never
+   * break the response.
+   */
+  onSettled?: () => Promise<void>;
 }
 
 /**
@@ -166,17 +173,29 @@ function createChatStream(params: ChatStreamOptions): ReadableStream<ChatChunk> 
   });
   return new ReadableStream<ChatChunk>({
     async start(controller) {
-      for await (const chunk of stream) {
-        try {
-          controller.enqueue(chunk);
-        } catch {
-          // Client disconnected; keep draining so persistence still runs.
-        }
-      }
+      // The close and the settle callback sit in `finally`, so a throw from the generator still
+      // closes the stream and still frees whatever the caller reserved for this turn.
       try {
-        controller.close();
-      } catch {
-        // Already closed.
+        for await (const chunk of stream) {
+          try {
+            controller.enqueue(chunk);
+          } catch {
+            // Client disconnected; keep draining so persistence still runs.
+          }
+        }
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          // Already closed.
+        }
+        if (params.onSettled) {
+          try {
+            await params.onSettled();
+          } catch (err) {
+            params.logger.error({ err, userId: params.userId }, 'Failed to settle the chat stream');
+          }
+        }
       }
     },
   });
