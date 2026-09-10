@@ -150,8 +150,9 @@ export async function exchangeCodeForIdToken({
  * Verifies the Google ID token and extracts the profile information.
  *
  * Throws `InvalidIdTokenError` when the token cannot be trusted — bad
- * signature, expired, or missing claims — and `HostedDomainMismatchError`
- * (a subclass) when the token's hosted domain is not allow-listed.
+ * signature, expired, missing claims, or an `aud` claim that names a different
+ * OAuth client — and `HostedDomainMismatchError` (a subclass) when the token's
+ * hosted domain is not allow-listed.
  *
  * The hosted-domain restriction is enforced on the Google-verified `hd`
  * (Workspace) claim, not on the email address. `hd` is the account's Workspace
@@ -170,7 +171,13 @@ export async function verifyIdToken(idToken: string): Promise<GoogleProfile> {
 
   let ticket: LoginTicket;
   try {
-    ticket = await client.verifyIdToken({ idToken });
+    // `audience` binds the check to this application's OAuth client.
+    // `google-auth-library` compares the `aud` claim only when an audience is
+    // supplied; without it the verifier accepts any token Google signed, for any
+    // client. Today the token always comes from our own code exchange, so the
+    // check is redundant. It is here so this function stays safe on its own, and
+    // not by how its one caller obtains the token.
+    ticket = await client.verifyIdToken({ idToken, audience: env.GOOGLE_CLIENT_ID });
   } catch {
     throw new InvalidIdTokenError(`Google ID token rejected by verifier`);
   }
