@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import { validateLearningUnit, validateLearningUnitDraft } from './validation.js';
+import { ERROR_MESSAGES, validateLearningUnit, validateLearningUnitDraft } from './validation.js';
 
 vi.mock('$env/dynamic/public', () => ({ env: {} }));
 
@@ -188,5 +188,67 @@ describe('URL scheme validation', () => {
       ]),
     });
     expect(validateLearningUnit(fd).success).toBe(true);
+  });
+});
+
+describe('validateLearningUnit - sources', () => {
+  const VALID_CONTENTS = JSON.stringify([{ type: 'VIDEO', url: 'https://example.com/video/123' }]);
+
+  test('rejects an empty sources array for publish', () => {
+    const fd = makeFormData({
+      ...BASE_PUBLISH,
+      contents: VALID_CONTENTS,
+      sources: JSON.stringify([]),
+    });
+    const result = validateLearningUnit(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.sources?.message).toBe(ERROR_MESSAGES.ARRAY_MIN('Source', 1));
+    }
+  });
+
+  test('rejects a missing sources field for publish', () => {
+    const fd = makeFormData({ ...BASE_PUBLISH, contents: VALID_CONTENTS });
+    fd.delete('sources');
+    const result = validateLearningUnit(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.sources?.message).toBe(ERROR_MESSAGES.ARRAY_MIN('Source', 1));
+    }
+  });
+
+  test('keeps the invalid-data message when sources is not valid JSON', () => {
+    const fd = makeFormData({
+      ...BASE_PUBLISH,
+      contents: VALID_CONTENTS,
+      sources: 'not-json',
+    });
+    const result = validateLearningUnit(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.sources?.message).toBe(ERROR_MESSAGES.INVALID_DATA());
+    }
+  });
+
+  test('rejects a source with an empty title', () => {
+    const fd = makeFormData({
+      ...BASE_PUBLISH,
+      contents: VALID_CONTENTS,
+      sources: JSON.stringify([{ title: '', sourceURL: 'https://example.com', tagId: 'tag-1' }]),
+    });
+    const result = validateLearningUnit(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.sources?.items?.[0].title).toBeDefined();
+    }
+  });
+
+  test('accepts an empty sources array in a draft', () => {
+    const fd = makeFormData({
+      ...BASE_DRAFT,
+      contents: JSON.stringify([]),
+      sources: JSON.stringify([]),
+    });
+    expect(validateLearningUnitDraft(fd).success).toBe(true);
   });
 });
