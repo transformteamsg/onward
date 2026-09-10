@@ -11,7 +11,10 @@ const { mockFindMany, mockCreateChatStreamResponse, mockValidateCSRFToken, limit
     limits: {
       maxRequests: 2,
       windowSeconds: 60,
+      maxConcurrentRequests: 2,
       maxQueryLength: 50,
+      concurrencyLeaseSeconds: 300,
+      concurrencyRetryAfterSeconds: 5,
     },
     store: {
       counters: new Map<string, number>(),
@@ -32,12 +35,13 @@ vi.mock('$lib/server/auth', () => ({
 
 vi.mock('$lib/server/chat', () => ({
   CHAT_RATE_LIMIT_NAMESPACE: 'ratelimit:chat:messages',
+  CHAT_CONCURRENCY_NAMESPACE: 'concurrency:chat:messages',
   chatLimits: limits,
   createChatStreamResponse: mockCreateChatStreamResponse,
 }));
 
-// The limiter itself is not mocked: these tests drive the real fixed-window helper over a Valkey
-// stand-in, so the statuses and headers come from real counters.
+// The limiter itself is not mocked: these tests drive the real fixed-window and concurrency helpers
+// over a Valkey stand-in, so the statuses and headers come from real counters.
 vi.mock('$lib/server/valkey.js', () => ({
   valkey: {
     incr: async (key: string) => {
@@ -124,6 +128,7 @@ beforeEach(() => {
   store.failOn = null;
   limits.maxRequests = 2;
   limits.windowSeconds = 60;
+  limits.maxConcurrentRequests = 2;
   limits.maxQueryLength = 50;
   mockValidateCSRFToken.mockResolvedValue(true);
   mockFindMany.mockResolvedValue([]);
@@ -192,6 +197,9 @@ describe('POST /api/messages — request rate limit', () => {
   });
 
   test('allows requests again once the window lapses', async () => {
+    // The mocked stream never settles, so raise the pool to keep the concurrency cap out of the way
+    // and leave the window as the only limit under test.
+    limits.maxConcurrentRequests = 10;
     await POST(buildEvent());
     await POST(buildEvent());
     expect((await POST(buildEvent())).status).toBe(429);
@@ -231,6 +239,58 @@ describe('POST /api/messages — prompt size bound', () => {
     mockRequestJson.mockResolvedValue({ query: 'x'.repeat(50) });
 
     const response = await POST(buildEvent());
+
+    expect(response.status).toBe(200);
+  });
+
+  test('takes no concurrency slot for a rejected prompt', async () => {
+    mockRequestJson.mockResolvedValue({ query: 'x'.repeat(51) });
+
+    await POST(buildEvent());
+
+    expect(store.counters.has('concurrency:chat:messages:user-1')).toBe(false);
+  });
+});
+
+describe('POST /api/messages — concurrency cap', () => {
+  test('returns 429 with a Retry-After header once the learner fills the pool', async () => {
+    limits.maxConcurrentRequests = 1;
+    // The mocked stream never settles, so the first request keeps holding its slot.
+    await POST(buildEvent());
+
+    const response = await POST(buildEvent());
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('5');
+    expect(mockCreateChatStreamResponse).toHaveBeenCalledTimes(1);
+  });
+
+  test('admits the next request once the held slot is released', async () => {
+    limits.maxConcurrentRequests = 1;
+    await POST(buildEvent());
+    const { onSettled } = mockCreateChatStreamResponse.mock.calls[0][0];
+
+    await onSettled();
+
+    expect((await POST(buildEvent())).status).toBe(200);
+  });
+
+  test('releases the slot when the history lookup fails, so the learner is not locked out', async () => {
+    limits.maxConcurrentRequests = 1;
+    mockFindMany.mockRejectedValueOnce(new Error('db down'));
+
+    const failed = await POST(buildEvent());
+    const next = await POST(buildEvent());
+
+    expect(failed.status).toBe(500);
+    expect(next.status).toBe(200);
+  });
+
+  test('counts each learner against their own pool', async () => {
+    limits.maxConcurrentRequests = 1;
+    await POST(buildEvent());
+
+    const response = await POST(buildEvent({ user: { id: 'user-2' } }));
 
     expect(response.status).toBe(200);
   });

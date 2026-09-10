@@ -1,9 +1,19 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 
 import { learnerAuth } from '$lib/server/auth';
-import { CHAT_RATE_LIMIT_NAMESPACE, chatLimits, createChatStreamResponse } from '$lib/server/chat';
+import {
+  CHAT_CONCURRENCY_NAMESPACE,
+  CHAT_RATE_LIMIT_NAMESPACE,
+  chatLimits,
+  createChatStreamResponse,
+} from '$lib/server/chat';
 import { db, type MessageFindManyArgs, type MessageGetPayload } from '$lib/server/db.js';
-import { consumeFixedWindow, type RateLimitDecision } from '$lib/server/ratelimit';
+import {
+  acquireConcurrencySlot,
+  type ConcurrencySlot,
+  consumeFixedWindow,
+  type RateLimitDecision,
+} from '$lib/server/ratelimit';
 import { valkey } from '$lib/server/valkey.js';
 
 import type { JSONObject } from '../types';
@@ -117,6 +127,27 @@ export const POST: RequestHandler = async (event) => {
     return json(null, { status: 413 });
   }
 
+  let slot: ConcurrencySlot;
+  try {
+    slot = await acquireConcurrencySlot(valkey, {
+      namespace: CHAT_CONCURRENCY_NAMESPACE,
+      identifier: user.id,
+      limit: chatLimits.maxConcurrentRequests,
+      leaseSeconds: chatLimits.concurrencyLeaseSeconds,
+    });
+  } catch (err) {
+    logger.error({ err, userId: user.id }, 'Failed to apply the concurrency limit');
+    return json(null, { status: 503 });
+  }
+
+  if (!slot.acquired) {
+    logger.warn({ userId: user.id }, 'Concurrent completion limit reached');
+    return json(null, {
+      status: 429,
+      headers: { 'Retry-After': String(chatLimits.concurrencyRetryAfterSeconds) },
+    });
+  }
+
   const messagesArgs = {
     select: { role: true, content: true },
     where: { thread: { userId: user.id, isActive: true } },
@@ -128,6 +159,8 @@ export const POST: RequestHandler = async (event) => {
     history = await db.message.findMany(messagesArgs);
   } catch (err) {
     logger.error({ err, userId: user.id }, 'Failed to get chat history');
+    // No stream will be created, so nothing else will ever release the slot.
+    await slot.release();
     return json(null, { status: 500 });
   }
 
@@ -139,6 +172,7 @@ export const POST: RequestHandler = async (event) => {
       content: m.content,
     })),
     logger,
+    onSettled: slot.release,
   });
 };
 
