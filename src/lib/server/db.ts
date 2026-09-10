@@ -13,11 +13,17 @@ export * from '../../generated/prisma/models.js';
 
 export const db = new PrismaClient({
   adapter: new PrismaPg({
-    connectionString: env.POSTGRES_URL || 'postgresql://root:secret@localhost:5432/onward-dev',
+    // The empty string keeps the adapter constructible during the build, which
+    // opens no connection. The variable is required at runtime below.
+    connectionString: env.POSTGRES_URL || '',
   }),
 });
 
 if (!building) {
+  if (!env.POSTGRES_URL) {
+    throw new Error('POSTGRES_URL is not set.');
+  }
+
   const isReady = await db
     .$connect()
     .then(() => true)

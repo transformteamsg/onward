@@ -10,11 +10,14 @@ import {
   PrismaClient,
 } from '../src/generated/prisma/client.js';
 
+const connectionString = process.env.POSTGRES_URL;
+
+if (!connectionString) {
+  throw new Error('POSTGRES_URL is not set.');
+}
+
 const db = new PrismaClient({
-  adapter: new PrismaPg({
-    connectionString:
-      process.env.POSTGRES_URL || 'postgresql://root:secret@localhost:5432/onward-dev',
-  }),
+  adapter: new PrismaPg({ connectionString }),
 });
 
 const tags: Prisma.TagCreateInput[] = [
