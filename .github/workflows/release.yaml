@@ -1,8 +1,13 @@
 name: Release
 
+# Runs on a push to main rather than on pull_request_target. GitHub restricted
+# Actions cache write access by trigger type on 2026-06-26: only push,
+# workflow_dispatch, repository_dispatch, delete, registry_package, page_build
+# and schedule may write a default-branch cache. pull_request_target resolves to
+# the default branch on merge and is therefore read-only, which made every
+# release fail at cache export with "failed to reserve cache".
 on:
-  pull_request_target:
-    types: [closed]
+  push:
     branches: [main]
 
 permissions:
@@ -14,40 +19,59 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  version:
+    name: Resolve version
+    if: "startsWith(github.event.head_commit.message, 'release: v')"
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      released: ${{ steps.resolve.outputs.released }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so every existing tag is visible to the check below.
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: resolve
+        env:
+          # Passed through the environment, never interpolated into the script.
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+
+          # Squash merges append " (#123)" to the subject and may carry a body.
+          # Only the subject is parsed, and only the captured version is used.
+          SUBJECT="${COMMIT_MESSAGE%%$'\n'*}"
+
+          if [[ ! "$SUBJECT" =~ ^release:[[:space:]]*v([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]+\(#[0-9]+\))?$ ]]; then
+            echo "Commit subject is not a release marker:"
+            echo "  $SUBJECT"
+            exit 1
+          fi
+
+          TAG="v${BASH_REMATCH[1]}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # The tag is pushed only after both images land, so an existing tag
+          # means this version was already published. Skip instead of rebuilding.
+          if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
+            echo "$TAG already released, nothing to do."
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Releasing $TAG."
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
   release:
     name: Release
-    if: >
-      github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.title, 'release: v')
+    needs: version
+    if: needs.version.outputs.released == 'false'
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Tag
-        id: tag
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          if [[ "$PR_TITLE" =~ ^release:[[:space:]]*v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            TAG="v${BASH_REMATCH[1]}"
-            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          else
-            echo "PR title must be like 'release: v1.2.3'"
-            exit 1
-          fi
-
-          git fetch --tags --quiet
-          if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
-            echo "Tag $TAG already exists. Aborting..."
-            exit 1
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "Automated release $TAG (#${PR_NUMBER})"
-          git push origin "$TAG"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -68,7 +92,7 @@ jobs:
         with:
           images: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_LEARNER_REPOSITORY }}
           tags: |
-            type=raw,value=${{ steps.tag.outputs.tag }}
+            type=raw,value=${{ needs.version.outputs.tag }}
 
       - name: Build and push image
         uses: docker/build-push-action@v6
@@ -79,7 +103,7 @@ jobs:
           platforms: linux/arm64
           tags: ${{ steps.metadata.outputs.tags }}
           cache-from: type=gha,scope=learner
-          cache-to: type=gha,mode=max,scope=learner
+          cache-to: type=gha,mode=max,scope=learner,ignore-error=true
 
       - name: Extract metadata for migrate image
         id: metadata-migrate
@@ -87,7 +111,7 @@ jobs:
         with:
           images: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_LEARNER_REPOSITORY }}
           tags: |
-            type=raw,value=${{ steps.tag.outputs.tag }}-migrate
+            type=raw,value=${{ needs.version.outputs.tag }}-migrate
 
       - name: Build and push migrate image
         uses: docker/build-push-action@v6
@@ -99,3 +123,19 @@ jobs:
           platforms: linux/arm64
           tags: ${{ steps.metadata-migrate.outputs.tags }}
           cache-from: type=gha,scope=learner
+          cache-to: type=gha,mode=max,scope=learner,ignore-error=true
+
+      # Last, so a failed build leaves no tag behind and the run is simply
+      # retryable. This is what the previous tag-first ordering got wrong.
+      - name: Tag
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Automated release $TAG"
+          git push origin "$TAG"
+
+          echo "Released $TAG with images $TAG and $TAG-migrate."
