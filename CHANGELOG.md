@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.16.2 (2026-09-11)
+
+### Chores 🧹
+
+- chore(`ci`): release from main pushes to restore Actions cache writes ([#646](https://github.com/transformteamsg/onward/pull/646)) ([cfd6f0f](https://github.com/transformteamsg/onward/commit/cfd6f0f))
+
 ## 1.16.1 (2026-09-10)
 
 ### Bug Fixes 🐛
