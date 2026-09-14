@@ -6,6 +6,8 @@
   const ERROR_MESSAGES: Record<string, string> = {
     domain_not_allowed:
       'You can only sign in with an approved organisation account. Please try again with your work email.',
+    email_not_verified:
+      "Your Google account email isn't verified. Please verify it with Google, then try signing in again.",
   };
   const GENERIC_ERROR_MESSAGE = 'Something went wrong while signing you in. Please try again.';
 
