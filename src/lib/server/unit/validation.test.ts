@@ -252,3 +252,91 @@ describe('validateLearningUnit - sources', () => {
     expect(validateLearningUnitDraft(fd).success).toBe(true);
   });
 });
+
+describe('validateLearningUnit - questionAnswers answer bounds', () => {
+  const VALID_CONTENTS = JSON.stringify([{ type: 'VIDEO', url: 'https://example.com/video/123' }]);
+
+  function makeQuestionAnswer(answer: unknown, options = ['A', 'B', 'C']) {
+    return {
+      question: 'What is the answer?',
+      options,
+      answer,
+      explanation: 'Because.',
+    };
+  }
+
+  test('rejects an answer index equal to options.length', () => {
+    const fd = makeFormData({
+      ...BASE_PUBLISH,
+      contents: VALID_CONTENTS,
+      questionAnswers: JSON.stringify([makeQuestionAnswer(3)]),
+    });
+    const result = validateLearningUnit(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.questionAnswers?.items?.[0].answer).toBe(ERROR_MESSAGES.INVALID_OPTION);
+    }
+  });
+
+  test('rejects a negative answer index', () => {
+    const fd = makeFormData({
+      ...BASE_PUBLISH,
+      contents: VALID_CONTENTS,
+      questionAnswers: JSON.stringify([makeQuestionAnswer(-1)]),
+    });
+    const result = validateLearningUnit(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.questionAnswers?.items?.[0].answer).toBe(ERROR_MESSAGES.INVALID_OPTION);
+    }
+  });
+
+  test('rejects a non-integer answer index', () => {
+    const fd = makeFormData({
+      ...BASE_PUBLISH,
+      contents: VALID_CONTENTS,
+      questionAnswers: JSON.stringify([makeQuestionAnswer(1.5)]),
+    });
+    const result = validateLearningUnit(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.questionAnswers?.items?.[0].answer).toBe(ERROR_MESSAGES.INVALID_OPTION);
+    }
+  });
+
+  test('rejects a non-numeric answer', () => {
+    const fd = makeFormData({
+      ...BASE_PUBLISH,
+      contents: VALID_CONTENTS,
+      questionAnswers: JSON.stringify([makeQuestionAnswer('not-a-number')]),
+    });
+    const result = validateLearningUnit(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.questionAnswers?.items?.[0].answer).toBe(ERROR_MESSAGES.FIELD_REQUIRED);
+    }
+  });
+
+  test.each([0, 1, 2])('accepts a valid boundary answer index %i', (answer) => {
+    const fd = makeFormData({
+      ...BASE_PUBLISH,
+      contents: VALID_CONTENTS,
+      questionAnswers: JSON.stringify([makeQuestionAnswer(answer)]),
+    });
+    expect(validateLearningUnit(fd).success).toBe(true);
+  });
+
+  test('rejects an out-of-range answer index in a draft', () => {
+    const fd = makeFormData({
+      ...BASE_DRAFT,
+      contents: JSON.stringify([]),
+      sources: JSON.stringify([]),
+      questionAnswers: JSON.stringify([makeQuestionAnswer(3)]),
+    });
+    const result = validateLearningUnitDraft(fd);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.questionAnswers?.items?.[0].answer).toBe(ERROR_MESSAGES.INVALID_OPTION);
+    }
+  });
+});
