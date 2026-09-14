@@ -107,6 +107,22 @@ describe('POST /api/onboarding', () => {
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
+  test('returns 422 when more than fifty collectionIds are submitted', async () => {
+    const event = buildEvent({
+      body: {
+        collectionIds: Array.from({ length: 51 }, (_, i) => `c${i}`),
+        frequency: 'QUICK',
+        csrfToken: 'token',
+      },
+    });
+
+    const response = await POST(event);
+
+    expect(response.status).toBe(422);
+    expect(mockFindMany).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
   test('returns 422 when a collectionId entry is not a string', async () => {
     const event = buildEvent({
       body: {

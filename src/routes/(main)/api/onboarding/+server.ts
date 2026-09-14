@@ -34,6 +34,7 @@ export const POST: RequestHandler = async (event) => {
       !('collectionIds' in params) ||
       !Array.isArray(params['collectionIds']) ||
       params['collectionIds'].length < 3 ||
+      params['collectionIds'].length > 50 ||
       !params['collectionIds'].every((id: unknown) => typeof id === 'string') ||
       !('frequency' in params) ||
       typeof params['frequency'] !== 'string' ||
