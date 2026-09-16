@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 
 import { HOME_PATH } from '$lib/helpers';
 import {
+  EmailNotVerifiedError,
   exchangeCodeForIdToken,
   type GoogleProfile,
   HostedDomainMismatchError,
@@ -77,6 +78,10 @@ export const GET: RequestHandler = async (event) => {
     if (err instanceof HostedDomainMismatchError) {
       logger.warn({ err }, 'Rejected sign-in from a non-allowed hosted domain');
       return redirect(302, '/login?error=domain_not_allowed');
+    }
+    if (err instanceof EmailNotVerifiedError) {
+      logger.warn({ err }, 'Rejected sign-in with an unverified email');
+      return redirect(302, '/login?error=email_not_verified');
     }
     logger.error({ err }, 'Failed to verify ID token');
     return redirect(302, '/login?error=oauth2_callback_failed');

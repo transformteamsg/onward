@@ -23,7 +23,26 @@ vi.mock('google-auth-library', () => ({
 
 function payloadWithHd(hd: string | undefined) {
   return {
-    getPayload: () => ({ sub: 'user-id', email: 'a@b.com', name: 'Test', picture: null, hd }),
+    getPayload: () => ({
+      sub: 'user-id',
+      email: 'a@b.com',
+      email_verified: true,
+      name: 'Test',
+      picture: null,
+      hd,
+    }),
+  };
+}
+
+function payloadWithEmailVerified(email_verified: boolean | undefined) {
+  return {
+    getPayload: () => ({
+      sub: 'user-id',
+      email: 'a@b.com',
+      email_verified,
+      name: 'Test',
+      picture: null,
+    }),
   };
 }
 
@@ -106,6 +125,34 @@ describe('verifyIdToken hosted-domain enforcement', () => {
   });
 });
 
+describe('verifyIdToken email verification', () => {
+  test('rejects a token whose email_verified is false', async () => {
+    mockVerifyIdToken.mockResolvedValue(payloadWithEmailVerified(false));
+
+    const { verifyIdToken, EmailNotVerifiedError, InvalidIdTokenError } = await import(
+      './google.js'
+    );
+    // A subclass of InvalidIdTokenError so existing catch-all handling still applies,
+    // but distinguishable so the callback can show a verification-specific message.
+    await expect(verifyIdToken('token')).rejects.toBeInstanceOf(EmailNotVerifiedError);
+    await expect(verifyIdToken('token')).rejects.toBeInstanceOf(InvalidIdTokenError);
+  });
+
+  test('rejects a token whose email_verified claim is missing', async () => {
+    mockVerifyIdToken.mockResolvedValue(payloadWithEmailVerified(undefined));
+
+    const { verifyIdToken, EmailNotVerifiedError } = await import('./google.js');
+    await expect(verifyIdToken('token')).rejects.toBeInstanceOf(EmailNotVerifiedError);
+  });
+
+  test('accepts a token whose email_verified is true', async () => {
+    mockVerifyIdToken.mockResolvedValue(payloadWithEmailVerified(true));
+
+    const { verifyIdToken } = await import('./google.js');
+    await expect(verifyIdToken('token')).resolves.toMatchObject({ email: 'a@b.com' });
+  });
+});
+
 describe('verifyIdToken audience binding', () => {
   /**
    * Stands in for `google-auth-library`'s own `aud` check: the real verifier
@@ -119,7 +166,14 @@ describe('verifyIdToken audience binding', () => {
         throw new Error('Wrong recipient, payload audience != requiredAudience');
       }
       return {
-        getPayload: () => ({ sub: 'user-id', email: 'a@b.com', name: 'Test', picture: null, aud }),
+        getPayload: () => ({
+          sub: 'user-id',
+          email: 'a@b.com',
+          email_verified: true,
+          name: 'Test',
+          picture: null,
+          aud,
+        }),
       };
     });
   }

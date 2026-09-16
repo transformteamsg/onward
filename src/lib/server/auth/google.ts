@@ -151,8 +151,9 @@ export async function exchangeCodeForIdToken({
  *
  * Throws `InvalidIdTokenError` when the token cannot be trusted — bad
  * signature, expired, missing claims, or an `aud` claim that names a different
- * OAuth client — and `HostedDomainMismatchError` (a subclass) when the token's
- * hosted domain is not allow-listed.
+ * OAuth client — `EmailNotVerifiedError` (a subclass) when the token's `email`
+ * claim is not confirmed by `email_verified`, and `HostedDomainMismatchError`
+ * (a subclass) when the token's hosted domain is not allow-listed.
  *
  * The hosted-domain restriction is enforced on the Google-verified `hd`
  * (Workspace) claim, not on the email address. `hd` is the account's Workspace
@@ -164,6 +165,7 @@ export async function exchangeCodeForIdToken({
  * @param idToken - The Google ID token to verify.
  * @returns The Google profile.
  * @throws InvalidIdTokenError
+ * @throws EmailNotVerifiedError
  * @throws HostedDomainMismatchError
  */
 export async function verifyIdToken(idToken: string): Promise<GoogleProfile> {
@@ -186,10 +188,18 @@ export async function verifyIdToken(idToken: string): Promise<GoogleProfile> {
   if (!payload) {
     throw new InvalidIdTokenError('Google ID token payload missing');
   }
-  const { sub, email, name, picture } = payload;
+  const { sub, email, email_verified, name, picture } = payload;
   if (!sub || !email || !name) {
     const missing = !sub ? 'sub' : !email ? 'email' : 'name';
     throw new InvalidIdTokenError(`Google ID token missing claim: ${missing}`);
+  }
+
+  // Google's "Sign in with Google" guidance: an `email` claim is only proof of
+  // identity when `email_verified` is `true`. Without this, an attacker can
+  // place a victim's email in an unverified claim on their own Google account
+  // and be matched to the victim's row by the callbacks below.
+  if (email_verified !== true) {
+    throw new EmailNotVerifiedError('Google ID token email is not verified');
   }
 
   // Gate on the verified `hd` (Workspace) claim, not the email domain — see the
@@ -221,3 +231,11 @@ export class InvalidIdTokenError extends Error {
  * callers that care can distinguish it to surface a domain-specific message.
  */
 export class HostedDomainMismatchError extends InvalidIdTokenError {}
+
+/**
+ * Thrown when the token's `email` claim is not confirmed by `email_verified`.
+ * A subclass of `InvalidIdTokenError` so existing catch-all handling still
+ * rejects it, while callers that care can distinguish it to surface a
+ * verification-specific message.
+ */
+export class EmailNotVerifiedError extends InvalidIdTokenError {}
