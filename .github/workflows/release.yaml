@@ -10,6 +10,8 @@ on:
   push:
     branches: [main]
 
+# A ceiling, not a grant. Every job below narrows this to what it needs, so no
+# job holds contents: write or id-token: write unless it uses one.
 permissions:
   contents: write
   id-token: write
@@ -23,6 +25,8 @@ jobs:
     name: Resolve version
     if: "startsWith(github.event.head_commit.message, 'release: v')"
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
       released: ${{ steps.resolve.outputs.released }}
@@ -64,69 +68,30 @@ jobs:
             echo "released=false" >> "$GITHUB_OUTPUT"
           fi
 
-  release:
-    name: Release
+  publish-release:
+    name: Publish release images
     needs: version
     if: needs.version.outputs.released == 'false'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish-image.yaml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+
+  # A separate job that needs publish-release, so a failed build leaves no tag
+  # behind and the run is simply retryable. This is what the previous tag-first
+  # ordering got wrong.
+  tag:
+    name: Tag
+    needs: [version, publish-release]
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6
-        with:
-          aws-region: ${{ vars.AWS_REGION }}
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-
-      - name: Login to AWS ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
-
-      - name: Extract metadata for image
-        id: metadata
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_LEARNER_REPOSITORY }}
-          tags: |
-            type=raw,value=${{ needs.version.outputs.tag }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          platforms: linux/arm64
-          tags: ${{ steps.metadata.outputs.tags }}
-          cache-from: type=gha,scope=learner
-          cache-to: type=gha,mode=max,scope=learner,ignore-error=true
-
-      - name: Extract metadata for migrate image
-        id: metadata-migrate
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_LEARNER_REPOSITORY }}
-          tags: |
-            type=raw,value=${{ needs.version.outputs.tag }}-migrate
-
-      - name: Build and push migrate image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          file: Dockerfile
-          target: migrate
-          push: true
-          platforms: linux/arm64
-          tags: ${{ steps.metadata-migrate.outputs.tags }}
-          cache-from: type=gha,scope=learner
-          cache-to: type=gha,mode=max,scope=learner,ignore-error=true
-
-      # Last, so a failed build leaves no tag behind and the run is simply
-      # retryable. This is what the previous tag-first ordering got wrong.
       - name: Tag
         env:
           TAG: ${{ needs.version.outputs.tag }}
@@ -139,3 +104,48 @@ jobs:
           git push origin "$TAG"
 
           echo "Released $TAG with images $TAG and $TAG-migrate."
+
+  # Every other merge to main publishes under its pull request number, so a
+  # lower environment can pull a change by the request it came from. A release
+  # commit is skipped, because publish-release already publishes that commit
+  # under its version tag.
+  pull-request:
+    name: Resolve pull request
+    if: "!startsWith(github.event.head_commit.message, 'release: v')"
+    runs-on: ubuntu-24.04-arm
+    permissions: {}
+    outputs:
+      number: ${{ steps.resolve.outputs.number }}
+    steps:
+      # No checkout. This job reads the event payload and nothing else.
+      - name: Resolve pull request number
+        id: resolve
+        env:
+          # Passed through the environment, never interpolated into the script.
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+
+          # A squash merge appends " (#123)" to the subject. Only the subject is
+          # read, and only the captured number is used.
+          SUBJECT="${COMMIT_MESSAGE%%$'\n'*}"
+
+          if [[ "$SUBJECT" =~ \(#([0-9]+)\)$ ]]; then
+            echo "number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            echo "Publishing pr-${BASH_REMATCH[1]}-latest."
+          else
+            echo "number=" >> "$GITHUB_OUTPUT"
+            echo "No pull request number in this subject, so nothing is published:"
+            echo "  $SUBJECT"
+          fi
+
+  publish-merge:
+    name: Publish merge images
+    needs: pull-request
+    if: needs.pull-request.outputs.number != ''
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish-image.yaml
+    with:
+      tag: pr-${{ needs.pull-request.outputs.number }}-latest
