@@ -28,7 +28,7 @@ jobs:
       released: ${{ steps.resolve.outputs.released }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Full history so every existing tag is visible to the check below.
           fetch-depth: 0
@@ -71,31 +71,31 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6
         with:
           aws-region: ${{ vars.AWS_REGION }}
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
 
       - name: Login to AWS ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Extract metadata for image
         id: metadata
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_LEARNER_REPOSITORY }}
           tags: |
             type=raw,value=${{ needs.version.outputs.tag }}
 
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: Dockerfile
@@ -107,14 +107,14 @@ jobs:
 
       - name: Extract metadata for migrate image
         id: metadata-migrate
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_LEARNER_REPOSITORY }}
           tags: |
             type=raw,value=${{ needs.version.outputs.tag }}-migrate
 
       - name: Build and push migrate image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: Dockerfile
