@@ -313,6 +313,18 @@ describe('updateLJCompletionStatus action', () => {
     });
   };
 
+  test('only completes a unit that is published', async () => {
+    mockRequiredUnit();
+    const event = buildEvent({ fields: { csrfToken: 'csrf-1' } });
+
+    await actions.updateLJCompletionStatus(event);
+
+    expect(mockLearningUnitFindUnique.mock.calls[0][0].where).toEqual({
+      id: UNIT_ID,
+      status: 'PUBLISHED',
+    });
+  });
+
   test('ignores a client-supplied isQuizPassed and fails an attempt with wrong answers', async () => {
     mockRequiredUnit();
     recordSelections({

@@ -252,6 +252,7 @@ export const actions: Actions = {
       },
       where: {
         id: event.params.id,
+        status: LearningUnitStatus.PUBLISHED,
       },
     } satisfies LearningUnitFindUniqueArgs;
 
