@@ -270,6 +270,13 @@ export function validateLearningUnitDraft(
             : questionAnswer.answer;
         if (typeof answerIndex !== 'number' || isNaN(answerIndex)) {
           itemError.answer = ERROR_MESSAGES.INVALID_DATA('answer');
+        } else if (
+          Array.isArray(questionAnswer.options) &&
+          (!Number.isInteger(answerIndex) ||
+            answerIndex < 0 ||
+            answerIndex >= questionAnswer.options.length)
+        ) {
+          itemError.answer = ERROR_MESSAGES.INVALID_OPTION;
         } else {
           questionAnswer.answer = answerIndex;
         }
@@ -483,6 +490,13 @@ export function validateLearningUnit(data: FormData):
             : questionAnswer.answer;
         if (typeof answerIndex !== 'number' || isNaN(answerIndex)) {
           itemError.answer = ERROR_MESSAGES.FIELD_REQUIRED;
+        } else if (
+          Array.isArray(questionAnswer.options) &&
+          (!Number.isInteger(answerIndex) ||
+            answerIndex < 0 ||
+            answerIndex >= questionAnswer.options.length)
+        ) {
+          itemError.answer = ERROR_MESSAGES.INVALID_OPTION;
         } else {
           questionAnswer.answer = answerIndex;
         }
