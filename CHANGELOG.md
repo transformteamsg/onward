@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.16.3 (2026-09-17)
+
+### Bug Fixes 🐛
+
+- fix(`api`): bound onboarding collectionIds by the topic catalogue ([#659](https://github.com/transformteamsg/onward/pull/659)) ([9095f13](https://github.com/transformteamsg/onward/commit/9095f13))
+- fix(`unit`): completion action omits the PUBLISHED filter for DRAFT units ([#660](https://github.com/transformteamsg/onward/pull/660)) ([8bae31c](https://github.com/transformteamsg/onward/commit/8bae31c))
+- fix(`unit`): bounds-check quiz answer index against options ([#658](https://github.com/transformteamsg/onward/pull/658)) ([cbd69e5](https://github.com/transformteamsg/onward/commit/cbd69e5))
+- fix(`auth`): reject Google ID tokens with an unverified email ([#654](https://github.com/transformteamsg/onward/pull/654)) ([c79ce5e](https://github.com/transformteamsg/onward/commit/c79ce5e))
+
+### Chores 🧹
+
+- chore(`docker`): bump the Node base image to clear container vulnerabilities ([#663](https://github.com/transformteamsg/onward/pull/663)) ([f750872](https://github.com/transformteamsg/onward/commit/f750872))
+- chore(`ci`): drop AWS credentials and image push from pull request runs ([#662](https://github.com/transformteamsg/onward/pull/662)) ([5112edf](https://github.com/transformteamsg/onward/commit/5112edf))
+- chore(deps): bump pnpm/action-setup from 6.0.10 to 6.1.0 ([#661](https://github.com/transformteamsg/onward/pull/661)) ([cfb105a](https://github.com/transformteamsg/onward/commit/cfb105a))
+- chore(`ci`): pin third-party GitHub Actions to commit SHAs ([#657](https://github.com/transformteamsg/onward/pull/657)) ([16de351](https://github.com/transformteamsg/onward/commit/16de351))
+
 ## 1.16.2 (2026-09-11)
 
 ### Chores 🧹
