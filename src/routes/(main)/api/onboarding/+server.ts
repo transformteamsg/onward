@@ -58,24 +58,40 @@ export const POST: RequestHandler = async (event) => {
   const uniqueCollectionIds = [...new Set<string>(collectionIds)];
 
   try {
-    const collectionArgs = {
+    // Read the topic catalogue instead of filtering by the submitted ids. The
+    // query cost is then independent of the request, so a long `collectionIds`
+    // array cannot grow the `in` list, and the catalogue size becomes the
+    // ceiling on a valid submission. No arbitrary maximum to keep in sync.
+    const topicArgs = {
       select: {
         id: true,
       },
       where: {
-        id: {
-          in: uniqueCollectionIds,
-        },
         isTopic: true,
       },
     } satisfies CollectionFindManyArgs;
 
-    const collections: CollectionGetPayload<typeof collectionArgs>[] =
-      await db.collection.findMany(collectionArgs);
+    const topics: CollectionGetPayload<typeof topicArgs>[] =
+      await db.collection.findMany(topicArgs);
 
-    if (collections.length !== uniqueCollectionIds.length) {
-      const resolvedIds = new Set(collections.map((collection) => collection.id));
-      const unresolvedIds = uniqueCollectionIds.filter((id) => !resolvedIds.has(id));
+    const topicIds = new Set(topics.map((topic) => topic.id));
+
+    // Bounds the arrays logged below to the catalogue size.
+    if (uniqueCollectionIds.length > topicIds.size) {
+      logger.warn(
+        {
+          userId: user.id,
+          submittedCount: uniqueCollectionIds.length,
+          topicCount: topicIds.size,
+        },
+        'More collectionIds submitted than there are topic collections',
+      );
+      return json(null, { status: 422 });
+    }
+
+    const unresolvedIds = uniqueCollectionIds.filter((id) => !topicIds.has(id));
+
+    if (unresolvedIds.length > 0) {
       logger.warn(
         { userId: user.id, submittedIds: uniqueCollectionIds, unresolvedIds },
         'One or more collectionIds did not resolve to a topic collection',
@@ -88,8 +104,8 @@ export const POST: RequestHandler = async (event) => {
         userId: user.id,
         learningFrequency: frequency,
         interests: {
-          create: collections.map((collection) => ({
-            collectionId: collection.id,
+          create: uniqueCollectionIds.map((collectionId) => ({
+            collectionId,
           })),
         },
       },

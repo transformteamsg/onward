@@ -107,6 +107,41 @@ describe('POST /api/onboarding', () => {
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
+  test('returns 422 when more unique collectionIds are submitted than there are topics', async () => {
+    mockFindMany.mockResolvedValue([{ id: 'c1' }, { id: 'c2' }, { id: 'c3' }]);
+    const event = buildEvent({
+      body: {
+        collectionIds: ['c1', 'c2', 'c3', 'c4'],
+        frequency: 'QUICK',
+        csrfToken: 'token',
+      },
+    });
+
+    const response = await POST(event);
+
+    expect(response.status).toBe(422);
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(silentLogger.warn).toHaveBeenCalled();
+  });
+
+  test('queries the topic catalogue without an id filter', async () => {
+    mockFindMany.mockResolvedValue([{ id: 'c1' }, { id: 'c2' }, { id: 'c3' }]);
+    mockCreate.mockResolvedValue({});
+    const event = buildEvent({
+      body: {
+        collectionIds: ['c1', 'c2', 'c3'],
+        frequency: 'QUICK',
+        csrfToken: 'token',
+      },
+    });
+
+    await POST(event);
+
+    expect(mockFindMany).toHaveBeenCalledTimes(1);
+    const findManyArgs = mockFindMany.mock.calls[0][0];
+    expect(findManyArgs.where).toEqual({ isTopic: true });
+  });
+
   test('returns 422 when a collectionId entry is not a string', async () => {
     const event = buildEvent({
       body: {
@@ -171,9 +206,6 @@ describe('POST /api/onboarding', () => {
 
     expect(response.status).toBe(200);
     expect(mockFindMany).toHaveBeenCalledTimes(1);
-    expect(mockFindMany.mock.calls[0][0]).toMatchObject({
-      where: { id: { in: ['c1', 'c2', 'c3'] }, isTopic: true },
-    });
     expect(mockCreate).toHaveBeenCalledTimes(1);
     const createArgs = mockCreate.mock.calls[0][0];
     expect(createArgs.data.userId).toBe('user-1');
@@ -186,7 +218,7 @@ describe('POST /api/onboarding', () => {
   });
 
   test('returns 422 and writes nothing when a single id does not resolve', async () => {
-    mockFindMany.mockResolvedValue([{ id: 'c1' }, { id: 'c2' }]);
+    mockFindMany.mockResolvedValue([{ id: 'c1' }, { id: 'c2' }, { id: 'c4' }]);
     const event = buildEvent({
       body: {
         collectionIds: ['c1', 'c2', 'c3'],
