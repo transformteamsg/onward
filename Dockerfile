@@ -1,7 +1,17 @@
 # ----------------------------------------
 # Base Stage
 # ----------------------------------------
-FROM node:24.14.0-alpine3.22 AS base
+FROM node:24.21.0-alpine3.23 AS base
+
+# Apply outstanding Alpine security updates.
+#
+# The image bakes an `apk` snapshot from its build date, which lags the `v3.23`
+# branch. Alpine backports security fixes to a stable branch, so the fixed
+# packages are already published there. This trades reproducibility for those
+# fixes: exact `apk` pins break whenever Alpine supersedes a package.
+#
+# This runs before the `wget` below, so that download uses the current OpenSSL.
+RUN apk upgrade --no-cache
 
 RUN mkdir /app
 WORKDIR /app
@@ -73,6 +83,22 @@ RUN pnpm install --offline --prod
 # Runtime Base Stage
 # ----------------------------------------
 FROM base AS runtime
+
+# Drop the parts of the Node distribution no published image runs.
+#
+# Nothing calls `npm` or `corepack`: `pnpm` is a static binary, and both
+# published stages run their entrypoint through `node`. `include/node` holds the
+# C headers for native module builds, which neither stage compiles. Both carry
+# their own vulnerabilities, so an unused copy is scan noise and nothing else.
+#
+# This has to stay in `runtime`, not `base`. The `build` stage also derives from
+# `base` and must keep a complete toolchain.
+RUN rm -rf /usr/local/lib/node_modules/npm \
+        /usr/local/lib/node_modules/corepack \
+        /usr/local/include/node \
+        /usr/local/bin/npm \
+        /usr/local/bin/npx \
+        /usr/local/bin/corepack
 
 RUN apk add --no-cache ca-certificates
 
