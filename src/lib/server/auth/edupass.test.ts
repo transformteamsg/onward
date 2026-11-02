@@ -103,27 +103,58 @@ afterAll(() => {
   rmSync(keysDir, { recursive: true, force: true });
 });
 
+const TENANT = 'test-tenant-0000';
+const ISSUER = `https://login.microsoftonline.com/${TENANT}/v2.0`;
+const DISCOVERY_URL = `${ISSUER}/.well-known/openid-configuration`;
+const AUTHORIZATION_ENDPOINT = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/authorize`;
+const TOKEN_ENDPOINT = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`;
 const CLIENT_ID = 'test-client-id-1111';
+
+const DISCOVERY_DOCUMENT = {
+  issuer: ISSUER,
+  authorization_endpoint: AUTHORIZATION_ENDPOINT,
+  token_endpoint: TOKEN_ENDPOINT,
+  jwks_uri: `https://login.microsoftonline.com/${TENANT}/discovery/v2.0/keys`,
+};
+
+// Answers only the discovery URL, so discovery from any other URL fails.
+const fetchStub = vi.fn(async (input: RequestInfo | URL) => {
+  const url = input instanceof Request ? input.url : String(input);
+  if (url !== DISCOVERY_URL) {
+    return new Response('not found', { status: 404 });
+  }
+  return new Response(JSON.stringify(DISCOVERY_DOCUMENT), {
+    headers: { 'content-type': 'application/json' },
+  });
+});
 
 beforeEach(() => {
   // Valid settings. Each test changes only the one it is about.
+  env.EDUPASS_OIDC_URL = ISSUER;
   env.EDUPASS_CLIENT_ID = CLIENT_ID;
   env.EDUPASS_CERTIFICATE = CERTIFICATE_PEM;
   env.EDUPASS_PRIVATE_KEY = PRIVATE_KEY_PEM;
-  // A fresh module per test, so each one starts with no settings.
+  vi.stubGlobal('fetch', fetchStub);
+  // A fresh module per test, so each one starts with no settings and no cached discovery.
   vi.resetModules();
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.doUnmock('$app/environment');
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
 describe('loadEdupassSettings', () => {
   test('loads nothing during the build, so the build needs no settings', async () => {
     vi.doMock('$app/environment', () => ({ building: true }));
-    for (const name of ['EDUPASS_CLIENT_ID', 'EDUPASS_CERTIFICATE', 'EDUPASS_PRIVATE_KEY']) {
+    for (const name of [
+      'EDUPASS_OIDC_URL',
+      'EDUPASS_CLIENT_ID',
+      'EDUPASS_CERTIFICATE',
+      'EDUPASS_PRIVATE_KEY',
+    ]) {
       env[name] = undefined;
     }
     const { getEdupassClient, loadEdupassSettings } = await import('./edupass.js');
@@ -133,25 +164,38 @@ describe('loadEdupassSettings', () => {
     expect(() => getEdupassClient()).toThrow('Edupass settings are not loaded.');
   });
 
-  test.each(['EDUPASS_CLIENT_ID', 'EDUPASS_CERTIFICATE', 'EDUPASS_PRIVATE_KEY'])(
-    'refuses to start when %s is unset',
-    async (name) => {
-      env[name] = undefined;
-      const { loadEdupassSettings } = await import('./edupass.js');
+  test.each([
+    'EDUPASS_OIDC_URL',
+    'EDUPASS_CLIENT_ID',
+    'EDUPASS_CERTIFICATE',
+    'EDUPASS_PRIVATE_KEY',
+  ])('refuses to start when %s is unset', async (name) => {
+    env[name] = undefined;
+    const { loadEdupassSettings } = await import('./edupass.js');
 
-      expect(() => loadEdupassSettings()).toThrow(`${name} is not set.`);
-    },
-  );
+    expect(() => loadEdupassSettings()).toThrow(`${name} is not set.`);
+  });
 
-  test.each(['EDUPASS_CLIENT_ID', 'EDUPASS_CERTIFICATE', 'EDUPASS_PRIVATE_KEY'])(
-    'refuses to start when %s is empty',
-    async (name) => {
-      env[name] = '';
-      const { loadEdupassSettings } = await import('./edupass.js');
+  test.each([
+    'EDUPASS_OIDC_URL',
+    'EDUPASS_CLIENT_ID',
+    'EDUPASS_CERTIFICATE',
+    'EDUPASS_PRIVATE_KEY',
+  ])('refuses to start when %s is empty', async (name) => {
+    env[name] = '';
+    const { loadEdupassSettings } = await import('./edupass.js');
 
-      expect(() => loadEdupassSettings()).toThrow(`${name} is not set.`);
-    },
-  );
+    expect(() => loadEdupassSettings()).toThrow(`${name} is not set.`);
+  });
+
+  test('refuses to start when EDUPASS_OIDC_URL is not a URL', async () => {
+    env.EDUPASS_OIDC_URL = 'not a url';
+    const { loadEdupassSettings } = await import('./edupass.js');
+
+    expect(() => loadEdupassSettings()).toThrow(
+      expect.objectContaining({ name: 'TypeError', code: 'ERR_INVALID_URL' }),
+    );
+  });
 
   test('refuses to start when EDUPASS_CERTIFICATE is not a PEM certificate', async () => {
     env.EDUPASS_CERTIFICATE = 'not a certificate';
@@ -227,5 +271,59 @@ describe('getEdupassClient', () => {
     const client = getEdupassClient();
 
     expect(client).toEqual({ client_id: CLIENT_ID });
+  });
+});
+
+describe('discoverEdupassAuthorizationServer', () => {
+  test('refuses to discover before the settings are loaded', async () => {
+    const { discoverEdupassAuthorizationServer } = await import('./edupass.js');
+
+    await expect(discoverEdupassAuthorizationServer()).rejects.toThrow(
+      'Edupass settings are not loaded.',
+    );
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  test('discovers the issuer once and reuses the result', async () => {
+    const { discoverEdupassAuthorizationServer, loadEdupassSettings } = await import(
+      './edupass.js'
+    );
+    loadEdupassSettings();
+
+    const first = await discoverEdupassAuthorizationServer();
+    const second = await discoverEdupassAuthorizationServer();
+
+    expect(fetchStub).toHaveBeenCalledOnce();
+    expect(second).toBe(first);
+  });
+
+  test('shares one discovery between calls that start at the same time', async () => {
+    const { discoverEdupassAuthorizationServer, loadEdupassSettings } = await import(
+      './edupass.js'
+    );
+    loadEdupassSettings();
+
+    const [first, second] = await Promise.all([
+      discoverEdupassAuthorizationServer(),
+      discoverEdupassAuthorizationServer(),
+    ]);
+
+    expect(fetchStub).toHaveBeenCalledOnce();
+    expect(second).toBe(first);
+  });
+
+  test('retries discovery after a failure instead of caching the failure', async () => {
+    const { discoverEdupassAuthorizationServer, loadEdupassSettings } = await import(
+      './edupass.js'
+    );
+    loadEdupassSettings();
+    fetchStub.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    await expect(discoverEdupassAuthorizationServer()).rejects.toThrow('fetch failed');
+    await expect(discoverEdupassAuthorizationServer()).resolves.toMatchObject({
+      authorization_endpoint: AUTHORIZATION_ENDPOINT,
+    });
+
+    expect(fetchStub).toHaveBeenCalledTimes(2);
   });
 });
