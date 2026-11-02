@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.17.0 (2026-11-02)
+
+### Features ✨
+
+- feat: prepare the users table for Edupass sign-in ([#697](https://github.com/transformteamsg/onward/pull/697)) ([2c4dc4e](https://github.com/transformteamsg/onward/commit/2c4dc4e))
+
 ## 1.16.3 (2026-09-17)
 
 ### Bug Fixes 🐛
