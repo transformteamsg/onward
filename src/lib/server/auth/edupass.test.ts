@@ -2,12 +2,22 @@
 // oauth4webapi checks `instanceof Response`, `Uint8Array`, and `CryptoKey`
 // against Node's globals. The jsdom realm would break those checks.
 import { execFileSync } from 'node:child_process';
-import { X509Certificate } from 'node:crypto';
+import { constants, createPublicKey, verify, X509Certificate } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  assert,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+} from 'vitest';
 
 // Mutable env object: the module reads `$env/dynamic/private` when it loads the settings. Each
 // test changes only the setting it is about.
@@ -159,7 +169,7 @@ describe('loadEdupassSettings', () => {
     }
     const { getEdupassClient, loadEdupassSettings } = await import('./edupass.js');
 
-    loadEdupassSettings();
+    await loadEdupassSettings();
 
     expect(() => getEdupassClient()).toThrow('Edupass settings are not loaded.');
   });
@@ -173,7 +183,7 @@ describe('loadEdupassSettings', () => {
     env[name] = undefined;
     const { loadEdupassSettings } = await import('./edupass.js');
 
-    expect(() => loadEdupassSettings()).toThrow(`${name} is not set.`);
+    await expect(loadEdupassSettings()).rejects.toThrow(`${name} is not set.`);
   });
 
   test.each([
@@ -185,14 +195,14 @@ describe('loadEdupassSettings', () => {
     env[name] = '';
     const { loadEdupassSettings } = await import('./edupass.js');
 
-    expect(() => loadEdupassSettings()).toThrow(`${name} is not set.`);
+    await expect(loadEdupassSettings()).rejects.toThrow(`${name} is not set.`);
   });
 
   test('refuses to start when EDUPASS_OIDC_URL is not a URL', async () => {
     env.EDUPASS_OIDC_URL = 'not a url';
     const { loadEdupassSettings } = await import('./edupass.js');
 
-    expect(() => loadEdupassSettings()).toThrow(
+    await expect(loadEdupassSettings()).rejects.toThrow(
       expect.objectContaining({ name: 'TypeError', code: 'ERR_INVALID_URL' }),
     );
   });
@@ -201,7 +211,7 @@ describe('loadEdupassSettings', () => {
     env.EDUPASS_CERTIFICATE = 'not a certificate';
     const { loadEdupassSettings } = await import('./edupass.js');
 
-    expect(() => loadEdupassSettings()).toThrow(
+    await expect(loadEdupassSettings()).rejects.toThrow(
       expect.objectContaining({ code: 'ERR_OSSL_PEM_NO_START_LINE' }),
     );
   });
@@ -210,7 +220,7 @@ describe('loadEdupassSettings', () => {
     env.EDUPASS_PRIVATE_KEY = 'not a private key';
     const { loadEdupassSettings } = await import('./edupass.js');
 
-    expect(() => loadEdupassSettings()).toThrow(
+    await expect(loadEdupassSettings()).rejects.toThrow(
       expect.objectContaining({ code: 'ERR_OSSL_UNSUPPORTED' }),
     );
   });
@@ -219,7 +229,7 @@ describe('loadEdupassSettings', () => {
     env.EDUPASS_PRIVATE_KEY = UNRELATED_PRIVATE_KEY_PEM;
     const { loadEdupassSettings } = await import('./edupass.js');
 
-    expect(() => loadEdupassSettings()).toThrow(
+    await expect(loadEdupassSettings()).rejects.toThrow(
       'EDUPASS_PRIVATE_KEY does not match EDUPASS_CERTIFICATE.',
     );
   });
@@ -229,7 +239,7 @@ describe('loadEdupassSettings', () => {
     env.EDUPASS_PRIVATE_KEY = EC_PRIVATE_KEY_PEM;
     const { loadEdupassSettings } = await import('./edupass.js');
 
-    expect(() => loadEdupassSettings()).toThrow(
+    await expect(loadEdupassSettings()).rejects.toThrow(
       'EDUPASS_PRIVATE_KEY must be an RSA key of at least 2048 bits.',
     );
   });
@@ -239,7 +249,7 @@ describe('loadEdupassSettings', () => {
     vi.setSystemTime(new X509Certificate(CERTIFICATE_PEM).validToDate.getTime() + 1000);
     const { loadEdupassSettings } = await import('./edupass.js');
 
-    expect(() => loadEdupassSettings()).toThrow('EDUPASS_CERTIFICATE has expired.');
+    await expect(loadEdupassSettings()).rejects.toThrow('EDUPASS_CERTIFICATE has expired.');
   });
 
   test('refuses to start when the key pair is DSA, even with a 2048-bit modulus', async () => {
@@ -247,7 +257,7 @@ describe('loadEdupassSettings', () => {
     env.EDUPASS_PRIVATE_KEY = DSA_PRIVATE_KEY_PEM;
     const { loadEdupassSettings } = await import('./edupass.js');
 
-    expect(() => loadEdupassSettings()).toThrow(
+    await expect(loadEdupassSettings()).rejects.toThrow(
       'EDUPASS_PRIVATE_KEY must be an RSA key of at least 2048 bits.',
     );
   });
@@ -257,7 +267,7 @@ describe('loadEdupassSettings', () => {
     env.EDUPASS_PRIVATE_KEY = SHORT_RSA_PRIVATE_KEY_PEM;
     const { loadEdupassSettings } = await import('./edupass.js');
 
-    expect(() => loadEdupassSettings()).toThrow(
+    await expect(loadEdupassSettings()).rejects.toThrow(
       'EDUPASS_PRIVATE_KEY must be an RSA key of at least 2048 bits.',
     );
   });
@@ -266,7 +276,7 @@ describe('loadEdupassSettings', () => {
 describe('getEdupassClient', () => {
   test('returns the client with the configured client ID', async () => {
     const { getEdupassClient, loadEdupassSettings } = await import('./edupass.js');
-    loadEdupassSettings();
+    await loadEdupassSettings();
 
     const client = getEdupassClient();
 
@@ -288,7 +298,7 @@ describe('discoverEdupassAuthorizationServer', () => {
     const { discoverEdupassAuthorizationServer, loadEdupassSettings } = await import(
       './edupass.js'
     );
-    loadEdupassSettings();
+    await loadEdupassSettings();
 
     const first = await discoverEdupassAuthorizationServer();
     const second = await discoverEdupassAuthorizationServer();
@@ -301,7 +311,7 @@ describe('discoverEdupassAuthorizationServer', () => {
     const { discoverEdupassAuthorizationServer, loadEdupassSettings } = await import(
       './edupass.js'
     );
-    loadEdupassSettings();
+    await loadEdupassSettings();
 
     const [first, second] = await Promise.all([
       discoverEdupassAuthorizationServer(),
@@ -316,7 +326,7 @@ describe('discoverEdupassAuthorizationServer', () => {
     const { discoverEdupassAuthorizationServer, loadEdupassSettings } = await import(
       './edupass.js'
     );
-    loadEdupassSettings();
+    await loadEdupassSettings();
     fetchStub.mockRejectedValueOnce(new TypeError('fetch failed'));
 
     await expect(discoverEdupassAuthorizationServer()).rejects.toThrow('fetch failed');
@@ -325,5 +335,99 @@ describe('discoverEdupassAuthorizationServer', () => {
     });
 
     expect(fetchStub).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('edupassClientAuth', () => {
+  test('refuses to sign before the settings are loaded', async () => {
+    const { edupassClientAuth } = await import('./edupass.js');
+
+    expect(() =>
+      edupassClientAuth(
+        { issuer: ISSUER, token_endpoint: TOKEN_ENDPOINT },
+        { client_id: CLIENT_ID },
+        new URLSearchParams(),
+        new Headers(),
+      ),
+    ).toThrow('Edupass settings are not loaded.');
+  });
+
+  test('signs the client assertion with PS256 and carries the certificate thumbprint', async () => {
+    const {
+      discoverEdupassAuthorizationServer,
+      edupassClientAuth,
+      getEdupassClient,
+      loadEdupassSettings,
+    } = await import('./edupass.js');
+    await loadEdupassSettings();
+    const authorizationServer = await discoverEdupassAuthorizationServer();
+    const body = new URLSearchParams();
+
+    await edupassClientAuth(authorizationServer, getEdupassClient(), body, new Headers());
+
+    const assertion = body.get('client_assertion');
+    assert(assertion !== null);
+    const [headerPart, payloadPart, signaturePart] = assertion.split('.');
+    const header = JSON.parse(Buffer.from(headerPart, 'base64url').toString('utf8'));
+    expect(header.alg).toBe('PS256');
+    expect(header.typ).toBe('JWT');
+    // Node's SHA-256 fingerprint is hex with colons, so it checks the thumbprint independently.
+    expect(header['x5t#S256']).toBe(
+      Buffer.from(
+        new X509Certificate(CERTIFICATE_PEM).fingerprint256.replaceAll(':', ''),
+        'hex',
+      ).toString('base64url'),
+    );
+    expect(
+      verify(
+        'sha256',
+        Buffer.from(`${headerPart}.${payloadPart}`),
+        {
+          key: createPublicKey(CERTIFICATE_PEM),
+          padding: constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: 32,
+        },
+        Buffer.from(signaturePart, 'base64url'),
+      ),
+    ).toBe(true);
+  });
+
+  test('addresses the client assertion to the token endpoint', async () => {
+    const {
+      discoverEdupassAuthorizationServer,
+      edupassClientAuth,
+      getEdupassClient,
+      loadEdupassSettings,
+    } = await import('./edupass.js');
+    await loadEdupassSettings();
+    const authorizationServer = await discoverEdupassAuthorizationServer();
+    const body = new URLSearchParams();
+
+    await edupassClientAuth(authorizationServer, getEdupassClient(), body, new Headers());
+
+    const assertion = body.get('client_assertion');
+    assert(assertion !== null);
+    const claims = JSON.parse(Buffer.from(assertion.split('.')[1], 'base64url').toString('utf8'));
+    expect(claims.aud).toBe(TOKEN_ENDPOINT);
+  });
+
+  test('expires the client assertion 5 to 10 minutes after it becomes valid', async () => {
+    const {
+      discoverEdupassAuthorizationServer,
+      edupassClientAuth,
+      getEdupassClient,
+      loadEdupassSettings,
+    } = await import('./edupass.js');
+    await loadEdupassSettings();
+    const authorizationServer = await discoverEdupassAuthorizationServer();
+    const body = new URLSearchParams();
+
+    await edupassClientAuth(authorizationServer, getEdupassClient(), body, new Headers());
+
+    const assertion = body.get('client_assertion');
+    assert(assertion !== null);
+    const claims = JSON.parse(Buffer.from(assertion.split('.')[1], 'base64url').toString('utf8'));
+    expect(claims.exp - claims.nbf).toBeGreaterThanOrEqual(300);
+    expect(claims.exp - claims.nbf).toBeLessThanOrEqual(600);
   });
 });

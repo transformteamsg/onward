@@ -1,4 +1,4 @@
-import { createPrivateKey, X509Certificate } from 'node:crypto';
+import { createHash, createPrivateKey, X509Certificate } from 'node:crypto';
 
 import * as oauth from 'oauth4webapi';
 
@@ -10,18 +10,20 @@ export const EDUPASS_REDIRECT_URL_PATH = '/auth/edupass/callback';
 interface Edupass {
   client: oauth.Client;
   issuer: URL;
+  signingKey: CryptoKey;
+  certificateThumbprint: string;
 }
 
 let edupass: Edupass | undefined;
 let discovery: Promise<oauth.AuthorizationServer> | null = null;
 
 /**
- * Validates the Edupass settings and keeps them for the other Edupass functions. Does not contact
- * Edupass.
+ * Validates the Edupass settings, imports the signing key, and keeps both for the other Edupass
+ * functions. Does not contact Edupass.
  *
  * @throws Error when a setting is unset, invalid, or expired.
  */
-export function loadEdupassSettings(): void {
+export async function loadEdupassSettings(): Promise<void> {
   if (!building) {
     const { EDUPASS_OIDC_URL, EDUPASS_CLIENT_ID, EDUPASS_CERTIFICATE, EDUPASS_PRIVATE_KEY } = env;
     if (!EDUPASS_OIDC_URL) {
@@ -61,6 +63,14 @@ export function loadEdupassSettings(): void {
     edupass = {
       client: { client_id: EDUPASS_CLIENT_ID },
       issuer,
+      certificateThumbprint: createHash('sha256').update(certificate.raw).digest('base64url'),
+      signingKey: await crypto.subtle.importKey(
+        'pkcs8',
+        privateKey.export({ format: 'der', type: 'pkcs8' }),
+        { name: 'RSA-PSS', hash: 'SHA-256' },
+        false,
+        ['sign'],
+      ),
     };
     discovery = null;
   }
@@ -77,6 +87,26 @@ export function getEdupassClient(): oauth.Client {
   }
   return edupass.client;
 }
+
+/**
+ * Authenticates Glow to Edupass in the token request with a signed client assertion.
+ *
+ * @throws Error when the Edupass settings are not loaded.
+ */
+export const edupassClientAuth: oauth.ClientAuth = (as, client, body, headers) => {
+  if (!edupass) {
+    throw new Error('Edupass settings are not loaded.');
+  }
+  const { signingKey, certificateThumbprint } = edupass;
+  return oauth.PrivateKeyJwt(signingKey, {
+    [oauth.modifyAssertion]: (header, payload) => {
+      header.typ = 'JWT';
+      header['x5t#S256'] = certificateThumbprint;
+      payload.aud = as.token_endpoint;
+      payload.exp = Math.floor(Date.now() / 1000) + 5 * 60;
+    },
+  })(as, client, body, headers);
+};
 
 /**
  * Discovers the Edupass authorization server on first call and reuses it for the process.
