@@ -1,0 +1,231 @@
+// @vitest-environment node
+// oauth4webapi checks `instanceof Response`, `Uint8Array`, and `CryptoKey`
+// against Node's globals. The jsdom realm would break those checks.
+import { execFileSync } from 'node:child_process';
+import { X509Certificate } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
+
+// Mutable env object: the module reads `$env/dynamic/private` when it loads the settings. Each
+// test changes only the setting it is about.
+const env: Record<string, string | undefined> = {};
+vi.mock('$env/dynamic/private', () => ({ env }));
+
+// Throwaway keys, made once per file. The openssl CLI makes each key with a self-signed
+// certificate.
+let keysDir: string;
+let CERTIFICATE_PEM: string;
+let PRIVATE_KEY_PEM: string;
+let UNRELATED_PRIVATE_KEY_PEM: string;
+let EC_CERTIFICATE_PEM: string;
+let EC_PRIVATE_KEY_PEM: string;
+let SHORT_RSA_CERTIFICATE_PEM: string;
+let SHORT_RSA_PRIVATE_KEY_PEM: string;
+let DSA_CERTIFICATE_PEM: string;
+let DSA_PRIVATE_KEY_PEM: string;
+
+// Writes a new key and a self-signed certificate for it into `keysDir` and returns both PEMs.
+// `newkey` is the openssl `-newkey` value plus any `-pkeyopt` flags for it.
+function opensslKeyAndCertificate(
+  name: string,
+  newkey: string[],
+): { certificate: string; privateKey: string } {
+  const keyPath = join(keysDir, `${name}-key.pem`);
+  const certificatePath = join(keysDir, `${name}-cert.pem`);
+  execFileSync(
+    'openssl',
+    [
+      'req',
+      '-x509',
+      '-newkey',
+      ...newkey,
+      '-nodes',
+      '-keyout',
+      keyPath,
+      '-out',
+      certificatePath,
+      '-days',
+      '1',
+      '-subj',
+      `/CN=${name}`,
+    ],
+    { stdio: ['ignore', 'ignore', 'pipe'] },
+  );
+  return {
+    certificate: readFileSync(certificatePath, 'utf8'),
+    privateKey: readFileSync(keyPath, 'utf8'),
+  };
+}
+
+beforeAll(() => {
+  keysDir = mkdtempSync(join(tmpdir(), 'edupass-test-'));
+  const edupass = opensslKeyAndCertificate('test-only-edupass', ['rsa:2048']);
+  CERTIFICATE_PEM = edupass.certificate;
+  PRIVATE_KEY_PEM = edupass.privateKey;
+  UNRELATED_PRIVATE_KEY_PEM = opensslKeyAndCertificate('test-only-unrelated', [
+    'rsa:2048',
+  ]).privateKey;
+  const ec = opensslKeyAndCertificate('test-only-ec', [
+    'ec',
+    '-pkeyopt',
+    'ec_paramgen_curve:prime256v1',
+  ]);
+  EC_CERTIFICATE_PEM = ec.certificate;
+  EC_PRIVATE_KEY_PEM = ec.privateKey;
+  const shortRsa = opensslKeyAndCertificate('test-only-short-rsa', ['rsa:1024']);
+  SHORT_RSA_CERTIFICATE_PEM = shortRsa.certificate;
+  SHORT_RSA_PRIVATE_KEY_PEM = shortRsa.privateKey;
+  // openssl makes a DSA key only from a parameter file.
+  const dsaParamsPath = join(keysDir, 'dsa-params.pem');
+  execFileSync(
+    'openssl',
+    [
+      'genpkey',
+      '-genparam',
+      '-algorithm',
+      'DSA',
+      '-pkeyopt',
+      'dsa_paramgen_bits:2048',
+      '-out',
+      dsaParamsPath,
+    ],
+    { stdio: ['ignore', 'ignore', 'pipe'] },
+  );
+  const dsa = opensslKeyAndCertificate('test-only-dsa', [`dsa:${dsaParamsPath}`]);
+  DSA_CERTIFICATE_PEM = dsa.certificate;
+  DSA_PRIVATE_KEY_PEM = dsa.privateKey;
+});
+
+afterAll(() => {
+  rmSync(keysDir, { recursive: true, force: true });
+});
+
+const CLIENT_ID = 'test-client-id-1111';
+
+beforeEach(() => {
+  // Valid settings. Each test changes only the one it is about.
+  env.EDUPASS_CLIENT_ID = CLIENT_ID;
+  env.EDUPASS_CERTIFICATE = CERTIFICATE_PEM;
+  env.EDUPASS_PRIVATE_KEY = PRIVATE_KEY_PEM;
+  // A fresh module per test, so each one starts with no settings.
+  vi.resetModules();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.doUnmock('$app/environment');
+  vi.clearAllMocks();
+});
+
+describe('loadEdupassSettings', () => {
+  test('loads nothing during the build, so the build needs no settings', async () => {
+    vi.doMock('$app/environment', () => ({ building: true }));
+    for (const name of ['EDUPASS_CLIENT_ID', 'EDUPASS_CERTIFICATE', 'EDUPASS_PRIVATE_KEY']) {
+      env[name] = undefined;
+    }
+    const { getEdupassClient, loadEdupassSettings } = await import('./edupass.js');
+
+    loadEdupassSettings();
+
+    expect(() => getEdupassClient()).toThrow('Edupass settings are not loaded.');
+  });
+
+  test.each(['EDUPASS_CLIENT_ID', 'EDUPASS_CERTIFICATE', 'EDUPASS_PRIVATE_KEY'])(
+    'refuses to start when %s is unset',
+    async (name) => {
+      env[name] = undefined;
+      const { loadEdupassSettings } = await import('./edupass.js');
+
+      expect(() => loadEdupassSettings()).toThrow(`${name} is not set.`);
+    },
+  );
+
+  test.each(['EDUPASS_CLIENT_ID', 'EDUPASS_CERTIFICATE', 'EDUPASS_PRIVATE_KEY'])(
+    'refuses to start when %s is empty',
+    async (name) => {
+      env[name] = '';
+      const { loadEdupassSettings } = await import('./edupass.js');
+
+      expect(() => loadEdupassSettings()).toThrow(`${name} is not set.`);
+    },
+  );
+
+  test('refuses to start when EDUPASS_CERTIFICATE is not a PEM certificate', async () => {
+    env.EDUPASS_CERTIFICATE = 'not a certificate';
+    const { loadEdupassSettings } = await import('./edupass.js');
+
+    expect(() => loadEdupassSettings()).toThrow(
+      expect.objectContaining({ code: 'ERR_OSSL_PEM_NO_START_LINE' }),
+    );
+  });
+
+  test('refuses to start when EDUPASS_PRIVATE_KEY is not a PEM private key', async () => {
+    env.EDUPASS_PRIVATE_KEY = 'not a private key';
+    const { loadEdupassSettings } = await import('./edupass.js');
+
+    expect(() => loadEdupassSettings()).toThrow(
+      expect.objectContaining({ code: 'ERR_OSSL_UNSUPPORTED' }),
+    );
+  });
+
+  test('refuses to start when the private key does not match the certificate', async () => {
+    env.EDUPASS_PRIVATE_KEY = UNRELATED_PRIVATE_KEY_PEM;
+    const { loadEdupassSettings } = await import('./edupass.js');
+
+    expect(() => loadEdupassSettings()).toThrow(
+      'EDUPASS_PRIVATE_KEY does not match EDUPASS_CERTIFICATE.',
+    );
+  });
+
+  test('refuses to start when the key pair is not RSA, even if the pair matches', async () => {
+    env.EDUPASS_CERTIFICATE = EC_CERTIFICATE_PEM;
+    env.EDUPASS_PRIVATE_KEY = EC_PRIVATE_KEY_PEM;
+    const { loadEdupassSettings } = await import('./edupass.js');
+
+    expect(() => loadEdupassSettings()).toThrow(
+      'EDUPASS_PRIVATE_KEY must be an RSA key of at least 2048 bits.',
+    );
+  });
+
+  test('refuses to start when the certificate has expired', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new X509Certificate(CERTIFICATE_PEM).validToDate.getTime() + 1000);
+    const { loadEdupassSettings } = await import('./edupass.js');
+
+    expect(() => loadEdupassSettings()).toThrow('EDUPASS_CERTIFICATE has expired.');
+  });
+
+  test('refuses to start when the key pair is DSA, even with a 2048-bit modulus', async () => {
+    env.EDUPASS_CERTIFICATE = DSA_CERTIFICATE_PEM;
+    env.EDUPASS_PRIVATE_KEY = DSA_PRIVATE_KEY_PEM;
+    const { loadEdupassSettings } = await import('./edupass.js');
+
+    expect(() => loadEdupassSettings()).toThrow(
+      'EDUPASS_PRIVATE_KEY must be an RSA key of at least 2048 bits.',
+    );
+  });
+
+  test('refuses to start when the RSA key is shorter than 2048 bits', async () => {
+    env.EDUPASS_CERTIFICATE = SHORT_RSA_CERTIFICATE_PEM;
+    env.EDUPASS_PRIVATE_KEY = SHORT_RSA_PRIVATE_KEY_PEM;
+    const { loadEdupassSettings } = await import('./edupass.js');
+
+    expect(() => loadEdupassSettings()).toThrow(
+      'EDUPASS_PRIVATE_KEY must be an RSA key of at least 2048 bits.',
+    );
+  });
+});
+
+describe('getEdupassClient', () => {
+  test('returns the client with the configured client ID', async () => {
+    const { getEdupassClient, loadEdupassSettings } = await import('./edupass.js');
+    loadEdupassSettings();
+
+    const client = getEdupassClient();
+
+    expect(client).toEqual({ client_id: CLIENT_ID });
+  });
+});
