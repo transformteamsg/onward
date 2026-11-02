@@ -27,6 +27,7 @@
     "@prisma/client": "^7.10.0",
     "@valkey/valkey-glide": "2.0.1",
     "exceljs": "^4.4.0",
+    "oauth4webapi": "^3.8.8",
     "openai": "^5.23.2",
     "weaviate-client": "^3.14.0"
   },
