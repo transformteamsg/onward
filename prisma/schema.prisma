@@ -13,9 +13,10 @@ model User {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   // Domain-Specific Fields.
-  name             String @map("name") @db.VarChar(255)
-  email            String @unique @map("email")
-  googleProviderId String @unique @map("google_provider_id")
+  name             String  @map("name") @db.VarChar(255)
+  email            String  @unique @map("email")
+  googleProviderId String? @unique @map("google_provider_id")
+  edupassId        String? @unique @map("edupass_id")
   avatarURL        String? @map("avatar_url")
 
   // Relations.
