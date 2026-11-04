@@ -101,7 +101,7 @@ export const edupassClientAuth: oauth.ClientAuth = (as, client, body, headers) =
       header.typ = 'JWT';
       header['x5t#S256'] = certificateThumbprint;
       payload.aud = as.token_endpoint;
-      payload.exp = Math.floor(Date.now() / 1000) + 5 * 60;
+      payload.exp = Number(payload.nbf) + 5 * 60;
     },
   })(as, client, body, headers);
 };
