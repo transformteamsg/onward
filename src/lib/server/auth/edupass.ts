@@ -121,7 +121,7 @@ export async function discoverEdupassAuthorizationServer(): Promise<oauth.Author
     // A failed discovery clears the cache, so the next sign-in retries instead of failing for the
     // life of the process.
     discovery = oauth
-      .discoveryRequest(issuer, { algorithm: 'oidc' })
+      .discoveryRequest(issuer, { algorithm: 'oidc', signal: AbortSignal.timeout(10_000) })
       .then((response) => oauth.processDiscoveryResponse(issuer, response))
       .catch((error: unknown) => {
         discovery = null;
