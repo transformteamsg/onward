@@ -1,4 +1,4 @@
-import { createHash, createPrivateKey, X509Certificate } from 'node:crypto';
+import { createHash, createPrivateKey, type KeyObject, X509Certificate } from 'node:crypto';
 
 import * as oauth from 'oauth4webapi';
 
@@ -37,12 +37,27 @@ export async function loadEdupassSettings(): Promise<void> {
       throw new Error('EDUPASS_PRIVATE_KEY is not set.');
     }
 
-    const issuer = new URL(EDUPASS_OIDC_URL);
-    const certificate = new X509Certificate(EDUPASS_CERTIFICATE);
+    let issuer: URL;
+    try {
+      issuer = new URL(EDUPASS_OIDC_URL);
+    } catch (cause) {
+      throw new Error('EDUPASS_OIDC_URL is not a URL.', { cause });
+    }
+    let certificate: X509Certificate;
+    try {
+      certificate = new X509Certificate(EDUPASS_CERTIFICATE);
+    } catch (cause) {
+      throw new Error('EDUPASS_CERTIFICATE is not a PEM certificate.', { cause });
+    }
     if (certificate.validToDate <= new Date()) {
       throw new Error('EDUPASS_CERTIFICATE has expired.');
     }
-    const privateKey = createPrivateKey(EDUPASS_PRIVATE_KEY);
+    let privateKey: KeyObject;
+    try {
+      privateKey = createPrivateKey(EDUPASS_PRIVATE_KEY);
+    } catch (cause) {
+      throw new Error('EDUPASS_PRIVATE_KEY is not a PEM private key.', { cause });
+    }
     if (!certificate.checkPrivateKey(privateKey)) {
       throw new Error('EDUPASS_PRIVATE_KEY does not match EDUPASS_CERTIFICATE.');
     }

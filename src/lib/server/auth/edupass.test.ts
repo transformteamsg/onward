@@ -202,9 +202,7 @@ describe('loadEdupassSettings', () => {
     env.EDUPASS_OIDC_URL = 'not a url';
     const { loadEdupassSettings } = await import('./edupass.js');
 
-    await expect(loadEdupassSettings()).rejects.toThrow(
-      expect.objectContaining({ name: 'TypeError', code: 'ERR_INVALID_URL' }),
-    );
+    await expect(loadEdupassSettings()).rejects.toThrow('EDUPASS_OIDC_URL is not a URL.');
   });
 
   test('refuses to start when EDUPASS_CERTIFICATE is not a PEM certificate', async () => {
@@ -212,7 +210,7 @@ describe('loadEdupassSettings', () => {
     const { loadEdupassSettings } = await import('./edupass.js');
 
     await expect(loadEdupassSettings()).rejects.toThrow(
-      expect.objectContaining({ code: 'ERR_OSSL_PEM_NO_START_LINE' }),
+      'EDUPASS_CERTIFICATE is not a PEM certificate.',
     );
   });
 
@@ -221,7 +219,7 @@ describe('loadEdupassSettings', () => {
     const { loadEdupassSettings } = await import('./edupass.js');
 
     await expect(loadEdupassSettings()).rejects.toThrow(
-      expect.objectContaining({ code: 'ERR_OSSL_UNSUPPORTED' }),
+      'EDUPASS_PRIVATE_KEY is not a PEM private key.',
     );
   });
 
