@@ -1,6 +1,4 @@
 // @vitest-environment node
-// oauth4webapi checks `instanceof Response`, `Uint8Array`, and `CryptoKey`
-// against Node's globals. The jsdom realm would break those checks.
 import { execFileSync } from 'node:child_process';
 import { constants, createPublicKey, verify, X509Certificate } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
