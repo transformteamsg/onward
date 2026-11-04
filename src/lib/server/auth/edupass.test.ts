@@ -430,4 +430,27 @@ describe('edupassClientAuth', () => {
     expect(claims.exp - claims.nbf).toBeGreaterThanOrEqual(300);
     expect(claims.exp - claims.nbf).toBeLessThanOrEqual(600);
   });
+
+  test('gives each client assertion a new jti', async () => {
+    const {
+      discoverEdupassAuthorizationServer,
+      edupassClientAuth,
+      getEdupassClient,
+      loadEdupassSettings,
+    } = await import('./edupass.js');
+    await loadEdupassSettings();
+    const authorizationServer = await discoverEdupassAuthorizationServer();
+    const jtis: unknown[] = [];
+
+    for (let i = 0; i < 2; i++) {
+      const body = new URLSearchParams();
+      await edupassClientAuth(authorizationServer, getEdupassClient(), body, new Headers());
+      const assertion = body.get('client_assertion');
+      assert(assertion !== null);
+      jtis.push(JSON.parse(Buffer.from(assertion.split('.')[1], 'base64url').toString('utf8')).jti);
+    }
+
+    expect(jtis[0]).toEqual(expect.any(String));
+    expect(jtis[1]).not.toBe(jtis[0]);
+  });
 });
