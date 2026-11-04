@@ -149,29 +149,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-  vi.doUnmock('$app/environment');
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
 describe('loadEdupassSettings', () => {
-  test('loads nothing during the build, so the build needs no settings', async () => {
-    vi.doMock('$app/environment', () => ({ building: true }));
-    for (const name of [
-      'EDUPASS_OIDC_URL',
-      'EDUPASS_CLIENT_ID',
-      'EDUPASS_CERTIFICATE',
-      'EDUPASS_PRIVATE_KEY',
-    ]) {
-      env[name] = undefined;
-    }
-    const { getEdupassClient, loadEdupassSettings } = await import('./edupass.js');
-
-    await loadEdupassSettings();
-
-    expect(() => getEdupassClient()).toThrow('Edupass settings are not loaded.');
-  });
-
   test.each([
     'EDUPASS_OIDC_URL',
     'EDUPASS_CLIENT_ID',
@@ -270,6 +252,12 @@ describe('loadEdupassSettings', () => {
 });
 
 describe('getEdupassClient', () => {
+  test('refuses to return the client before the settings are loaded', async () => {
+    const { getEdupassClient } = await import('./edupass.js');
+
+    expect(() => getEdupassClient()).toThrow('Edupass settings are not loaded.');
+  });
+
   test('returns the client with the configured client ID', async () => {
     const { getEdupassClient, loadEdupassSettings } = await import('./edupass.js');
     await loadEdupassSettings();
