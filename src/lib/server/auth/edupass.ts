@@ -5,8 +5,6 @@ import * as oauth from 'oauth4webapi';
 import { building } from '$app/environment';
 import { env } from '$env/dynamic/private';
 
-export const EDUPASS_REDIRECT_URL_PATH = '/auth/edupass/callback';
-
 interface Edupass {
   client: oauth.Client;
   issuer: URL;
