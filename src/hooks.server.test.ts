@@ -1,10 +1,19 @@
 import { type Handle, isHttpError } from '@sveltejs/kit';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-const { mainHandle, adminHandle } = vi.hoisted(() => ({
+const { mainHandle, adminHandle, loadEdupassSettings, appEnvironment } = vi.hoisted(() => ({
   mainHandle: vi.fn(),
   adminHandle: vi.fn(),
+  loadEdupassSettings: vi.fn(),
+  appEnvironment: { building: false },
 }));
+
+vi.mock('$app/environment', () => ({
+  get building() {
+    return appEnvironment.building;
+  },
+}));
+vi.mock('$lib/server/auth/edupass.js', () => ({ loadEdupassSettings }));
 
 // The root hook reaches the group hooks through `import.meta.glob`, which Vite
 // compiles to a dynamic import per matched file. Mocking those two specifiers
@@ -12,7 +21,7 @@ const { mainHandle, adminHandle } = vi.hoisted(() => ({
 vi.mock('./routes/(main)/hooks.server.ts', () => ({ handle: mainHandle }));
 vi.mock('./routes/admin/hooks.server.ts', () => ({ handle: adminHandle }));
 
-import { handle } from './hooks.server.js';
+import { handle, init } from './hooks.server.js';
 
 type HookArgs = Parameters<Handle>[0];
 
@@ -26,8 +35,25 @@ const dispatch = (pathname: string) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  appEnvironment.building = false;
   mainHandle.mockResolvedValue(new Response('main'));
   adminHandle.mockResolvedValue(new Response('admin'));
+});
+
+describe('root init hook', () => {
+  test('stops startup when the Edupass settings fail to load', async () => {
+    loadEdupassSettings.mockRejectedValueOnce(new Error('EDUPASS_CLIENT_ID is not set.'));
+
+    await expect(init()).rejects.toThrow('EDUPASS_CLIENT_ID is not set.');
+  });
+
+  test('skips loading the Edupass settings during the build', async () => {
+    appEnvironment.building = true;
+
+    await init();
+
+    expect(loadEdupassSettings).not.toHaveBeenCalled();
+  });
 });
 
 describe('root hook realm dispatch', () => {
