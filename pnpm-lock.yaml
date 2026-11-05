@@ -41,6 +41,9 @@ importers:
       exceljs:
         specifier: ^4.4.0
         version: 4.4.0
+      oauth4webapi:
+        specifier: ^3.8.8
+        version: 3.8.8
       openai:
         specifier: ^5.23.2
         version: 5.23.2(ws@8.21.3)
@@ -2781,6 +2784,9 @@ packages:
   normalize-path@3.0.0:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
     engines: {node: '>=0.10.0'}
+
+  oauth4webapi@3.8.8:
+    resolution: {integrity: sha512-8N28E+a/oxfXWBgOMt+ZP/JUf/XR+IFbvkAEPP3gznXOMv9BpAAwiIj0TFNz3tGTPc0ZQ8zmWBNgN1nAys0gng==}
 
   obug@2.1.4:
     resolution: {integrity: sha512-4a+OsYv9UktOJKE+l1A4OufDgdRF9PifWj+tJnHURo/P+WOxpG4GzUFL9qCalmWauao6ogiG+QvnCovwPoyAWA==}
@@ -6245,6 +6251,8 @@ snapshots:
       formdata-polyfill: 4.0.10
 
   normalize-path@3.0.0: {}
+
+  oauth4webapi@3.8.8: {}
 
   obug@2.1.4: {}
 
