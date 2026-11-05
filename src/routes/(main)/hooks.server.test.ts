@@ -135,6 +135,7 @@ describe('learner route protection', () => {
     '/auth/google',
     '/auth/google/callback',
     '/auth/edupass',
+    '/auth/edupass/callback',
     '/terms',
     '/privacy',
   ])('lets %s through without a session', async (pathname) => {

@@ -3,22 +3,26 @@
   import { LinkButton } from '$lib/components/Button/index.js';
   import { HOME_PATH } from '$lib/helpers/index.js';
 
-  const ERROR_MESSAGES: Record<string, string> = {
-    domain_not_allowed:
-      'You can only sign in with an approved organisation account. Please try again with your work email.',
-    email_not_verified:
-      "Your Google account email isn't verified. Please verify it with Google, then try signing in again.",
-  };
-  const GENERIC_ERROR_MESSAGE = 'Something went wrong while signing you in. Please try again.';
-
   // Map the `error` query param to a user-facing message. Known codes get a
   // tailored message; any other non-empty code falls back to the generic one.
   const errorMessage = $derived.by(() => {
-    const error = page.url.searchParams.get('error');
-    if (!error) {
-      return null;
+    switch (page.url.searchParams.get('error')) {
+      case null:
+      case '':
+        return null;
+      case 'domain_not_allowed':
+        return 'You can only sign in with an approved organisation account. Please try again with your work email.';
+      case 'email_not_verified':
+        return "Your Google account email isn't verified. Please verify it with Google, then try signing in again.";
+      case 'edupass_no_email':
+        return "Your Edupass account has no email address, so you can't sign in to Glow. Please contact your school's Edupass administrator.";
+      case 'edupass_email_taken':
+        return 'Your Edupass email is already used by another Glow account, so you can\'t sign in with Edupass. Please ask for help through "Have questions?" below.';
+      case 'edupass_unavailable':
+        return 'Edupass is busy right now. Please wait a moment, then try again.';
+      default:
+        return 'Something went wrong while signing you in. Please try again.';
     }
-    return ERROR_MESSAGES[error] ?? GENERIC_ERROR_MESSAGE;
   });
 </script>
 
