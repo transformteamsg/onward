@@ -37,6 +37,30 @@ describe('login page', () => {
     );
   });
 
+  test('explains that the Edupass account has no email address', () => {
+    renderLogin('?error=edupass_no_email');
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      "Your Edupass account has no email address, so you can't sign in to Glow. Please contact your school's Edupass administrator.",
+    );
+  });
+
+  test('explains that another Glow account already uses the Edupass email', () => {
+    renderLogin('?error=edupass_email_taken');
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Your Edupass email is already used by another Glow account, so you can\'t sign in with Edupass. Please ask for help through "Have questions?" below.',
+    );
+  });
+
+  test('asks the learner to try again when Edupass is busy', () => {
+    renderLogin('?error=edupass_unavailable');
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Edupass is busy right now. Please wait a moment, then try again.',
+    );
+  });
+
   test('shows a general sign-in error for any other error code', () => {
     renderLogin('?error=oauth2_callback_failed');
 
