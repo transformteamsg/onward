@@ -19,7 +19,7 @@ import {
 
 // Mutable env object: the module reads `$env/dynamic/private` when it loads the settings. Each
 // test changes only the setting it is about.
-const env: Record<string, string | undefined> = {};
+const env = vi.hoisted((): Record<string, string | undefined> => ({}));
 vi.mock('$env/dynamic/private', () => ({ env }));
 
 // Throwaway keys, made once per file. The openssl CLI makes each key with a self-signed
