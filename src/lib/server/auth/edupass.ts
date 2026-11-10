@@ -11,6 +11,7 @@ interface Edupass {
   issuer: URL;
   signingKey: CryptoKey;
   certificateThumbprint: string;
+  allowInsecureRequests: boolean;
 }
 
 let edupass: Edupass | undefined;
@@ -23,7 +24,13 @@ let discovery: Promise<oauth.AuthorizationServer> | null = null;
  * @throws Error when a setting is unset, invalid, or expired.
  */
 export async function loadEdupassSettings(): Promise<void> {
-  const { EDUPASS_OIDC_URL, EDUPASS_CLIENT_ID, EDUPASS_CERTIFICATE, EDUPASS_PRIVATE_KEY } = env;
+  const {
+    EDUPASS_OIDC_URL,
+    EDUPASS_CLIENT_ID,
+    EDUPASS_CERTIFICATE,
+    EDUPASS_PRIVATE_KEY,
+    EDUPASS_ALLOW_INSECURE_REQUESTS,
+  } = env;
   if (!EDUPASS_OIDC_URL) {
     throw new Error('EDUPASS_OIDC_URL is not set.');
   }
@@ -42,6 +49,11 @@ export async function loadEdupassSettings(): Promise<void> {
     issuer = new URL(EDUPASS_OIDC_URL);
   } catch (cause) {
     throw new Error('EDUPASS_OIDC_URL is not a URL.', { cause });
+  }
+  // Plain HTTP is for a mock Edupass server on this machine only, never a real Edupass.
+  const allowInsecureRequests = EDUPASS_ALLOW_INSECURE_REQUESTS === 'true';
+  if (allowInsecureRequests && issuer.hostname !== 'localhost') {
+    throw new Error('EDUPASS_ALLOW_INSECURE_REQUESTS needs a localhost EDUPASS_OIDC_URL.');
   }
   let certificate: X509Certificate;
   try {
@@ -84,8 +96,21 @@ export async function loadEdupassSettings(): Promise<void> {
       false,
       ['sign'],
     ),
+    allowInsecureRequests,
   };
   discovery = null;
+}
+
+/**
+ * Returns the options every oauth4webapi request to Edupass takes.
+ *
+ * @throws Error when the Edupass settings are not loaded.
+ */
+export function getEdupassRequestOptions(): { [oauth.allowInsecureRequests]: boolean } {
+  if (!edupass) {
+    throw new Error('Edupass settings are not loaded.');
+  }
+  return { [oauth.allowInsecureRequests]: edupass.allowInsecureRequests };
 }
 
 /**
@@ -130,12 +155,16 @@ export async function discoverEdupassAuthorizationServer(): Promise<oauth.Author
   if (!edupass) {
     throw new Error('Edupass settings are not loaded.');
   }
-  const { issuer } = edupass;
+  const { issuer, allowInsecureRequests } = edupass;
   if (!discovery) {
     // A failed discovery clears the cache, so the next sign-in retries instead of failing for the
     // life of the process.
     discovery = oauth
-      .discoveryRequest(issuer, { algorithm: 'oidc', signal: AbortSignal.timeout(10_000) })
+      .discoveryRequest(issuer, {
+        algorithm: 'oidc',
+        signal: AbortSignal.timeout(10_000),
+        [oauth.allowInsecureRequests]: allowInsecureRequests,
+      })
       .then((response) => oauth.processDiscoveryResponse(issuer, response))
       .catch((error: unknown) => {
         discovery = null;
