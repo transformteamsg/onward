@@ -847,6 +847,14 @@ describe('GET /auth/edupass/callback', () => {
   test.each([
     ['the learner lookup fails', () => mockFindUnique.mockRejectedValue(new Error('db down'))],
     ['starting the session fails', () => mockSignIn.mockRejectedValue(new Error('valkey down'))],
+    [
+      'the token request fails',
+      () => {
+        tokenResponse = () => {
+          throw new TypeError('network down');
+        };
+      },
+    ],
   ])('redirects to the login page with an error when %s', async (_label, arrange) => {
     arrange();
     const session = buildSession();
@@ -854,6 +862,20 @@ describe('GET /auth/edupass/callback', () => {
 
     const result: unknown = await Promise.resolve(
       GET(callbackEvent(session, { code: 'auth-code', state })),
+    ).catch((err: unknown) => err);
+
+    expect(result).toMatchObject({ status: 302, location: CALLBACK_FAILED });
+  });
+
+  test('redirects to the login page with an error when discovery fails', async () => {
+    const session = buildSession();
+    const { state } = await startSignIn(session);
+    // A fresh Edupass module has no settings loaded, so its discovery throws.
+    vi.resetModules();
+    const { GET: routeWithoutSettings } = await import('./+server.js');
+
+    const result: unknown = await Promise.resolve(
+      routeWithoutSettings(callbackEvent(session, { code: 'auth-code', state })),
     ).catch((err: unknown) => err);
 
     expect(result).toMatchObject({ status: 302, location: CALLBACK_FAILED });
