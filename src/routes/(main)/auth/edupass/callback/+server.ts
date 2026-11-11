@@ -53,8 +53,6 @@ export const GET: RequestHandler = async (event) => {
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
-  // The logger's error serializer records the Edupass `error` and `error_description`, which carries
-  // the trace and correlation IDs the Edupass team asks for.
   let authorizationServer: oauth.AuthorizationServer;
   try {
     authorizationServer = await discoverEdupassAuthorizationServer();
@@ -67,6 +65,8 @@ export const GET: RequestHandler = async (event) => {
   const client = getEdupassClient();
   const requestOptions = getEdupassRequestOptions();
 
+  // The logger's error serializer records the Edupass `error` and `error_description`, which carries
+  // the trace and correlation IDs the Edupass team asks for.
   let callbackParameters: URLSearchParams;
   try {
     callbackParameters = oauth.validateAuthResponse(authorizationServer, client, event.url, state);
@@ -104,9 +104,9 @@ export const GET: RequestHandler = async (event) => {
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
-  let tokenResult: oauth.TokenEndpointResponse;
+  let tokens: oauth.TokenEndpointResponse;
   try {
-    tokenResult = await oauth.processAuthorizationCodeResponse(
+    tokens = await oauth.processAuthorizationCodeResponse(
       authorizationServer,
       client,
       tokenResponse,
@@ -140,7 +140,7 @@ export const GET: RequestHandler = async (event) => {
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
-  const claims = oauth.getValidatedIdTokenClaims(tokenResult);
+  const claims = oauth.getValidatedIdTokenClaims(tokens);
   if (!claims) {
     logger.error('Edupass returned no ID token');
     return redirect(302, '/login?error=oauth2_callback_failed');
@@ -165,15 +165,12 @@ export const GET: RequestHandler = async (event) => {
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
-  // Lowercased, because the unique index on `users.email` is case-sensitive.
   const email = [
     claims['cesEmail'],
     claims['notificationEmail'],
     claims['iconEmail'],
     claims['wogEmail'],
-  ]
-    .find((value): value is string => typeof value === 'string' && value !== '')
-    ?.toLowerCase();
+  ].find((value): value is string => typeof value === 'string' && value !== '');
 
   if (!email) {
     logger.warn({ edupassId }, 'Rejected sign-in from an Edupass account with no email');
@@ -204,7 +201,8 @@ export const GET: RequestHandler = async (event) => {
       user = await db.user.create({
         data: {
           name,
-          email,
+          // Lowercased, because the unique index on `users.email` is case-sensitive.
+          email: email.toLowerCase(),
           edupassId,
         },
         select: userArgs.select,
