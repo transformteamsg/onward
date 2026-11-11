@@ -3,8 +3,6 @@
   import { LinkButton } from '$lib/components/Button/index.js';
   import { HOME_PATH } from '$lib/helpers/index.js';
 
-  // Map the `error` query param to a user-facing message. Known codes get a
-  // tailored message; any other non-empty code falls back to the generic one.
   const errorMessage = $derived.by(() => {
     switch (page.url.searchParams.get('error')) {
       case null:
@@ -16,8 +14,6 @@
         return "Your Google account email isn't verified. Please verify it with Google, then try signing in again.";
       case 'edupass_no_email':
         return "Your Edupass account has no email address, so you can't sign in to Glow. Please contact your school's Edupass administrator.";
-      case 'edupass_email_taken':
-        return 'Your Edupass email is already used by another Glow account, so you can\'t sign in with Edupass. Please ask for help through "Have questions?" below.';
       case 'edupass_unavailable':
         return 'Edupass is busy right now. Please wait a moment, then try again.';
       default:

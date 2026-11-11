@@ -696,7 +696,7 @@ describe('GET /auth/edupass/callback', () => {
   });
 
   describe('when the email already belongs to another learner', () => {
-    test('redirects to the login page with the email-taken error', async () => {
+    test('redirects to the login page with an error', async () => {
       mockFindUnique.mockResolvedValue(null);
       mockCreate.mockRejectedValue(
         new MockKnownRequestError('Unique constraint failed on: `users_email_key`', 'P2002'),
@@ -708,7 +708,10 @@ describe('GET /auth/edupass/callback', () => {
         GET(callbackEvent(session, { code: 'auth-code', state })),
       ).catch((err: unknown) => err);
 
-      expect(result).toMatchObject({ status: 302, location: '/login?error=edupass_email_taken' });
+      expect(result).toMatchObject({
+        status: 302,
+        location: '/login?error=oauth2_callback_failed',
+      });
     });
 
     test('does not sign the learner in', async () => {

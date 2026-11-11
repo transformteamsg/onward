@@ -226,7 +226,7 @@ export const GET: RequestHandler = async (event) => {
       }
       if (!user) {
         logger.warn({ err, edupassId }, 'Rejected sign-in: the email belongs to another learner');
-        return redirect(302, '/login?error=edupass_email_taken');
+        return redirect(302, '/login?error=oauth2_callback_failed');
       }
       logger.info({ edupassId }, 'Another sign-in created the user first');
     }
