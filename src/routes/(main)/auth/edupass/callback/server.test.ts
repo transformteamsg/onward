@@ -574,7 +574,7 @@ describe('GET /auth/edupass/callback', () => {
       expect(mockCreate.mock.lastCall?.[0].data).toEqual({
         edupassId: EDUPASS_ID,
         name: 'Edupass Learner',
-        email: 'notify@example.com',
+        email: 'ces@example.com',
       });
     });
 
@@ -588,44 +588,44 @@ describe('GET /auth/edupass/callback', () => {
 
       expect(mockSignIn).toHaveBeenCalledExactlyOnceWith(event, {
         id: '8',
-        email: 'notify@example.com',
+        email: 'ces@example.com',
         name: 'Edupass Learner',
       });
     });
 
     test.each([
       {
-        label: 'no notification email picks CES',
+        label: 'no CES email picks notification',
         claims: {},
-        omit: ['notificationEmail'],
-        expected: 'ces@example.com',
+        omit: ['cesEmail'],
+        expected: 'notify@example.com',
       },
       {
-        label: 'an empty notification email picks CES',
-        claims: { notificationEmail: '' },
+        label: 'an empty CES email picks notification',
+        claims: { cesEmail: '' },
         omit: [],
-        expected: 'ces@example.com',
+        expected: 'notify@example.com',
       },
       {
-        label: 'a non-string notification email picks CES',
-        claims: { notificationEmail: true },
+        label: 'a non-string CES email picks notification',
+        claims: { cesEmail: true },
         omit: [],
-        expected: 'ces@example.com',
+        expected: 'notify@example.com',
       },
       {
         label: 'only ICON and WOG picks ICON',
         claims: {},
-        omit: ['notificationEmail', 'cesEmail'],
+        omit: ['cesEmail', 'notificationEmail'],
         expected: 'icon@example.com',
       },
       {
         label: 'only WOG picks WOG',
         claims: {},
-        omit: ['notificationEmail', 'cesEmail', 'iconEmail'],
+        omit: ['cesEmail', 'notificationEmail', 'iconEmail'],
         expected: 'wog@example.com',
       },
     ])(
-      'chooses the email in the order notification, CES, ICON, WOG: $label',
+      'chooses the email in the order CES, notification, ICON, WOG: $label',
       async ({ claims, omit, expected }) => {
         mockFindUnique.mockResolvedValue(null);
         serveIdToken({ claims, omit });
@@ -642,7 +642,7 @@ describe('GET /auth/edupass/callback', () => {
 
     test('lowercases the chosen email', async () => {
       mockFindUnique.mockResolvedValue(null);
-      serveIdToken({ claims: { notificationEmail: 'John.Tan@Example.COM' } });
+      serveIdToken({ claims: { cesEmail: 'John.Tan@Example.COM' } });
       const session = buildSession();
       const { state } = await startSignIn(session);
 

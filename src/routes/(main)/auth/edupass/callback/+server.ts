@@ -167,8 +167,8 @@ export const GET: RequestHandler = async (event) => {
 
   // Lowercased, because the unique index on `users.email` is case-sensitive.
   const email = [
-    claims['notificationEmail'],
     claims['cesEmail'],
+    claims['notificationEmail'],
     claims['iconEmail'],
     claims['wogEmail'],
   ]
