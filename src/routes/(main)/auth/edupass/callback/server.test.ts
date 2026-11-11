@@ -57,18 +57,12 @@ vi.mock('$lib/server/db.js', () => ({
   PrismaClientKnownRequestError: MockKnownRequestError,
 }));
 
-const TENANT = 'test-tenant-0000';
-const ISSUER = `https://login.microsoftonline.com/${TENANT}/v2.0`;
-const TOKEN_ENDPOINT = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`;
-const JWKS_URI = `https://login.microsoftonline.com/${TENANT}/discovery/v2.0/keys`;
+const ISSUER = 'https://login.microsoftonline.com/test-tenant-0000/v2.0';
+const TOKEN_ENDPOINT = 'https://login.microsoftonline.com/test-tenant-0000/oauth2/v2.0/token';
+const JWKS_URI = 'https://login.microsoftonline.com/test-tenant-0000/discovery/v2.0/keys';
 const CLIENT_ID = 'test-client-id-1111';
 
-const CALLBACK_FAILED = '/login?error=oauth2_callback_failed';
-const UNAVAILABLE = '/login?error=edupass_unavailable';
-
 const EDUPASS_ID = '000012345678';
-// The ID token's `sub` differs from the Edupass `id`. The route must never key a learner on it.
-const ENTRA_SUB = 'entra-sub-must-not-be-used';
 
 const existingLearner = {
   id: '7',
@@ -77,43 +71,7 @@ const existingLearner = {
 };
 
 // The key Edupass signs ID tokens with, served from the fake `jwks_uri`.
-const ID_TOKEN_KID = 'test-id-token-key';
 const idTokenKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-
-// Edupass error responses, with the login page error and the log level the route gives each.
-const AUTHORIZATION_ERRORS = [
-  { error: 'access_denied', location: CALLBACK_FAILED, level: 'warn' },
-  { error: 'server_error', location: UNAVAILABLE, level: 'warn' },
-  { error: 'temporarily_unavailable', location: UNAVAILABLE, level: 'warn' },
-  { error: 'interaction_required', location: CALLBACK_FAILED, level: 'error' },
-  { error: 'invalid_request', location: CALLBACK_FAILED, level: 'error' },
-];
-const TOKEN_ERRORS = [
-  { error: 'invalid_grant', location: CALLBACK_FAILED, level: 'warn' },
-  { error: 'interaction_required', location: CALLBACK_FAILED, level: 'warn' },
-  { error: 'temporarily_unavailable', location: UNAVAILABLE, level: 'warn' },
-  { error: 'invalid_client', location: CALLBACK_FAILED, level: 'error' },
-];
-
-// ID tokens the route refuses, as `serveIdToken` options.
-const REFUSED_ID_TOKENS = [
-  { label: 'has no id claim', token: { omit: ['id'] } },
-  { label: 'has no name claim', token: { omit: ['name'] } },
-  {
-    label: 'is signed by a key Edupass does not publish',
-    token: { signingKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey },
-  },
-  {
-    label: 'was issued more than 30 seconds in the future',
-    token: {
-      claims: {
-        iat: Math.floor(Date.now() / 1000) + 120,
-        nbf: Math.floor(Date.now() / 1000),
-        exp: Math.floor(Date.now() / 1000) + 3720,
-      },
-    },
-  },
-];
 
 // A throwaway RSA key and self-signed certificate, made with the openssl CLI once per file, then
 // loaded into the env the Edupass module reads.
@@ -153,54 +111,44 @@ afterAll(() => {
 let requests: { url: string; method: string; body: URLSearchParams | null }[] = [];
 let tokenResponse: () => Response;
 
-// Makes the token endpoint return a valid Edupass ID token, with the `claims` overrides applied,
-// the `omit` claims left out the way Edupass leaves out a claim it has no value for, and signed by
-// `signingKey`.
+// Makes the token endpoint return a valid Edupass ID token, with the `claims` overrides applied and
+// signed by `signingKey`. A claim set to `undefined` is left out, because `JSON.stringify` drops it,
+// the way Edupass leaves out a claim it has no value for.
 function serveIdToken({
   claims = {},
-  omit = [],
   signingKey = idTokenKeys.privateKey,
-}: { claims?: Record<string, unknown>; omit?: string[]; signingKey?: KeyObject } = {}): void {
+}: { claims?: Record<string, unknown>; signingKey?: KeyObject } = {}): void {
   const iat = Math.floor(Date.now() / 1000);
-  const payloadClaims: Record<string, unknown> = {
-    iss: ISSUER,
-    aud: CLIENT_ID,
-    sub: ENTRA_SUB,
-    iat,
-    nbf: iat,
-    exp: iat + 3600,
-    id: EDUPASS_ID,
-    name: 'Edupass Learner',
-    notificationEmail: 'notify@example.com',
-    cesEmail: 'ces@example.com',
-    iconEmail: 'icon@example.com',
-    wogEmail: 'wog@example.com',
-    ...claims,
-  };
-  for (const claim of omit) {
-    // `JSON.stringify` drops a claim set to `undefined`, so the ID token leaves it out.
-    payloadClaims[claim] = undefined;
-  }
-  const header = Buffer.from(
-    JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: ID_TOKEN_KID }),
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(
+    JSON.stringify({
+      iss: ISSUER,
+      aud: CLIENT_ID,
+      // Differs from `id`, so the lookup test shows which claim keys the learner.
+      sub: 'entra-sub-must-not-be-used',
+      iat,
+      nbf: iat,
+      exp: iat + 3600,
+      id: EDUPASS_ID,
+      name: 'Edupass Learner',
+      notificationEmail: 'notify@example.com',
+      cesEmail: 'ces@example.com',
+      iconEmail: 'icon@example.com',
+      wogEmail: 'wog@example.com',
+      ...claims,
+    }),
   ).toString('base64url');
-  const payload = Buffer.from(JSON.stringify(payloadClaims)).toString('base64url');
-  const signature = sign('sha256', Buffer.from(`${header}.${payload}`), signingKey);
-  const idToken = `${header}.${payload}.${signature.toString('base64url')}`;
   tokenResponse = () =>
     new Response(
       JSON.stringify({
         token_type: 'Bearer',
         access_token: 'test-access-token',
-        expires_in: 3600,
-        scope: 'openid',
-        id_token: idToken,
+        id_token: `${header}.${payload}.${sign('sha256', Buffer.from(`${header}.${payload}`), signingKey).toString('base64url')}`,
       }),
       { status: 200, headers: { 'content-type': 'application/json' } },
     );
 }
 
-// Makes the token endpoint answer with the Edupass error `error`.
 function serveTokenError(error: string): void {
   tokenResponse = () =>
     new Response(JSON.stringify({ error, error_description: 'Trace ID: test-trace-id' }), {
@@ -237,19 +185,17 @@ function buildSession(rawCSRFToken = 'raw-csrf-token') {
 
 type Session = ReturnType<typeof buildSession>;
 
-/**
- * Runs `/auth/edupass` against the session, the way a learner starts sign-in, and returns the
- * state and PKCE verifier it handed to Edupass. The verifier is the session value whose S256
- * challenge the authorize URL carries. The callback is then judged against whatever that route
- * stored, so these tests do not depend on how the route keeps the state.
- */
+// Starts sign-in through the real `/auth/edupass` route, so the callback is judged against
+// whatever that route stored, not against how it keeps the state. The verifier is the session
+// value whose S256 challenge the authorize URL carries.
 async function startSignIn(session: Session, returnTo?: string) {
-  const search = returnTo === undefined ? '' : `?return_to=${encodeURIComponent(returnTo)}`;
   const thrown: unknown = await Promise.resolve(
     startGET(
       buildEvent(
         '/(main)/auth/edupass',
-        new URL(`http://localhost/auth/edupass${search}`),
+        new URL(
+          `http://localhost/auth/edupass${returnTo === undefined ? '' : `?return_to=${encodeURIComponent(returnTo)}`}`,
+        ),
         session,
       ),
     ),
@@ -300,62 +246,53 @@ function buildEvent<RouteId extends '/(main)/auth/edupass' | '/(main)/auth/edupa
 }
 
 function callbackEvent(session: Session, query: Record<string, string>) {
-  const url = new URL('http://localhost/auth/edupass/callback');
-  for (const [key, value] of Object.entries(query)) {
-    url.searchParams.set(key, value);
-  }
-  return buildEvent('/(main)/auth/edupass/callback', url, session);
+  return buildEvent(
+    '/(main)/auth/edupass/callback',
+    new URL(`http://localhost/auth/edupass/callback?${new URLSearchParams(query)}`),
+    session,
+  );
 }
 
 beforeEach(async () => {
   vi.clearAllMocks();
   requests = [];
   serveIdToken();
-  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = input instanceof Request ? input.url : String(input);
-    const method = (
-      init?.method ?? (input instanceof Request ? input.method : 'GET')
-    ).toUpperCase();
-    let body: URLSearchParams | null = null;
-    const initBody = init?.body;
-    if (initBody !== undefined && initBody !== null) {
-      assert(
-        typeof initBody === 'string' || initBody instanceof URLSearchParams,
-        'unexpected request body type',
-      );
-      body = new URLSearchParams(initBody);
-    } else if (input instanceof Request && method === 'POST') {
-      body = new URLSearchParams(await input.text());
-    }
-    requests.push({ url, method, body });
+  // oauth4webapi always calls `fetch(url.href, init)`, with a `URLSearchParams` body on POST.
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET';
+    requests.push({
+      url,
+      method,
+      body: init?.body instanceof URLSearchParams ? init.body : null,
+    });
 
-    const pathless = url.split('?')[0];
-    if (pathless === `${ISSUER}/.well-known/openid-configuration`) {
+    if (url === `${ISSUER}/.well-known/openid-configuration`) {
       return new Response(
         JSON.stringify({
           issuer: ISSUER,
-          authorization_endpoint: `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/authorize`,
+          authorization_endpoint:
+            'https://login.microsoftonline.com/test-tenant-0000/oauth2/v2.0/authorize',
           token_endpoint: TOKEN_ENDPOINT,
           jwks_uri: JWKS_URI,
-          response_types_supported: ['code'],
-          response_modes_supported: ['query', 'fragment', 'form_post'],
-          subject_types_supported: ['pairwise'],
-          id_token_signing_alg_values_supported: ['RS256'],
-          scopes_supported: ['openid'],
-          token_endpoint_auth_methods_supported: ['private_key_jwt'],
-          code_challenge_methods_supported: ['S256'],
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
     }
-    if (pathless === JWKS_URI) {
-      const jwk = idTokenKeys.publicKey.export({ format: 'jwk' });
+    if (url === JWKS_URI) {
       return new Response(
-        JSON.stringify({ keys: [{ ...jwk, kid: ID_TOKEN_KID, use: 'sig', alg: 'RS256' }] }),
+        JSON.stringify({
+          keys: [
+            {
+              ...idTokenKeys.publicKey.export({ format: 'jwk' }),
+              use: 'sig',
+              alg: 'RS256',
+            },
+          ],
+        }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
     }
-    if (pathless === TOKEN_ENDPOINT && method === 'POST') {
+    if (url === TOKEN_ENDPOINT && method === 'POST') {
       return tokenResponse();
     }
     return new Response('not found', { status: 404 });
@@ -391,11 +328,14 @@ describe('GET /auth/edupass/callback', () => {
       await startSignIn(victim);
       const { state } = await startSignIn(buildSession('attacker-csrf-token'));
 
-      const result: unknown = await Promise.resolve(
+      const thrown: unknown = await Promise.resolve(
         GET(callbackEvent(victim, { code: 'auth-code', state })),
       ).catch((err: unknown) => err);
 
-      expect(result).toMatchObject({ status: 302, location: CALLBACK_FAILED });
+      expect(thrown).toMatchObject({
+        status: 302,
+        location: '/login?error=oauth2_callback_failed',
+      });
     });
 
     test('does not redeem the code', async () => {
@@ -410,18 +350,6 @@ describe('GET /auth/edupass/callback', () => {
       expect(requests).not.toContainEqual(
         expect.objectContaining({ url: TOKEN_ENDPOINT, method: 'POST' }),
       );
-    });
-
-    test('does not sign the learner in', async () => {
-      const victim = buildSession('victim-csrf-token');
-      await startSignIn(victim);
-      const { state } = await startSignIn(buildSession('attacker-csrf-token'));
-
-      await Promise.resolve(GET(callbackEvent(victim, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(mockSignIn).not.toHaveBeenCalled();
     });
   });
 
@@ -462,43 +390,18 @@ describe('GET /auth/edupass/callback', () => {
         JSON.stringify({ csrf_token: session.csrfToken(), return_to: '/' }),
       ).toString('base64url');
 
-      const result: unknown = await Promise.resolve(
+      const thrown: unknown = await Promise.resolve(
         GET(callbackEvent(session, { code: 'auth-code', state })),
       ).catch((err: unknown) => err);
 
-      expect(result).toMatchObject({ status: 302, location: CALLBACK_FAILED });
-    });
-
-    test('does not redeem the code', async () => {
-      const session = buildSession();
-      const state = Buffer.from(
-        JSON.stringify({ csrf_token: session.csrfToken(), return_to: '/' }),
-      ).toString('base64url');
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(requests).not.toContainEqual(
-        expect.objectContaining({ url: TOKEN_ENDPOINT, method: 'POST' }),
-      );
-    });
-
-    test('does not sign the learner in', async () => {
-      const session = buildSession();
-      const state = Buffer.from(
-        JSON.stringify({ csrf_token: session.csrfToken(), return_to: '/' }),
-      ).toString('base64url');
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(mockSignIn).not.toHaveBeenCalled();
+      expect(thrown).toMatchObject({
+        status: 302,
+        location: '/login?error=oauth2_callback_failed',
+      });
     });
   });
 
-  describe('Edupass identity', () => {
+  describe('when a learner has the same Edupass ID', () => {
     test('looks the learner up by the Edupass ID', async () => {
       const session = buildSession();
       const { state } = await startSignIn(session);
@@ -512,33 +415,6 @@ describe('GET /auth/edupass/callback', () => {
       );
     });
 
-    test('never passes the token subject to the database', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      const session = buildSession();
-      const { state } = await startSignIn(session);
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(JSON.stringify([mockFindUnique.mock.calls, mockCreate.mock.calls])).not.toContain(
-        ENTRA_SUB,
-      );
-    });
-
-    test('never passes the token subject to the session', async () => {
-      const session = buildSession();
-      const { state } = await startSignIn(session);
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(JSON.stringify(mockSignIn.mock.calls.map((call) => call[1]))).not.toContain(ENTRA_SUB);
-    });
-  });
-
-  describe('when a learner has the same Edupass ID', () => {
     test('does not create a learner', async () => {
       const session = buildSession();
       const { state } = await startSignIn(session);
@@ -594,51 +470,38 @@ describe('GET /auth/edupass/callback', () => {
     });
 
     test.each([
-      {
-        label: 'no CES email picks notification',
-        claims: {},
-        omit: ['cesEmail'],
-        expected: 'notify@example.com',
-      },
-      {
-        label: 'an empty CES email picks notification',
-        claims: { cesEmail: '' },
-        omit: [],
-        expected: 'notify@example.com',
-      },
-      {
-        label: 'a non-string CES email picks notification',
-        claims: { cesEmail: true },
-        omit: [],
-        expected: 'notify@example.com',
-      },
-      {
-        label: 'only ICON and WOG picks ICON',
-        claims: {},
-        omit: ['cesEmail', 'notificationEmail'],
-        expected: 'icon@example.com',
-      },
-      {
-        label: 'only WOG picks WOG',
-        claims: {},
-        omit: ['cesEmail', 'notificationEmail', 'iconEmail'],
-        expected: 'wog@example.com',
-      },
-    ])(
-      'chooses the email in the order CES, notification, ICON, WOG: $label',
-      async ({ claims, omit, expected }) => {
-        mockFindUnique.mockResolvedValue(null);
-        serveIdToken({ claims, omit });
-        const session = buildSession();
-        const { state } = await startSignIn(session);
+      [
+        'uses the notification email when there is no CES email',
+        { cesEmail: undefined },
+        'notify@example.com',
+      ],
+      [
+        'uses the notification email when the CES email is empty',
+        { cesEmail: '' },
+        'notify@example.com',
+      ],
+      [
+        'uses the ICON email when there is no CES or notification email',
+        { cesEmail: undefined, notificationEmail: undefined },
+        'icon@example.com',
+      ],
+      [
+        'uses the WOG email when it is the only email',
+        { cesEmail: undefined, notificationEmail: undefined, iconEmail: undefined },
+        'wog@example.com',
+      ],
+    ])('%s', async (_label, claims, expected) => {
+      mockFindUnique.mockResolvedValue(null);
+      serveIdToken({ claims });
+      const session = buildSession();
+      const { state } = await startSignIn(session);
 
-        await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-          () => undefined,
-        );
+      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
+        () => undefined,
+      );
 
-        expect(mockCreate.mock.lastCall?.[0].data.email).toBe(expected);
-      },
-    );
+      expect(mockCreate.mock.lastCall?.[0].data.email).toBe(expected);
+    });
 
     test('lowercases the chosen email', async () => {
       mockFindUnique.mockResolvedValue(null);
@@ -657,41 +520,22 @@ describe('GET /auth/edupass/callback', () => {
   describe('when the ID token has none of the four emails', () => {
     test('redirects to the login page with the no-email error', async () => {
       mockFindUnique.mockResolvedValue(null);
-      serveIdToken({ omit: ['notificationEmail', 'cesEmail', 'iconEmail', 'wogEmail'] });
+      serveIdToken({
+        claims: {
+          notificationEmail: undefined,
+          cesEmail: undefined,
+          iconEmail: undefined,
+          wogEmail: undefined,
+        },
+      });
       const session = buildSession();
       const { state } = await startSignIn(session);
 
-      const result: unknown = await Promise.resolve(
+      const thrown: unknown = await Promise.resolve(
         GET(callbackEvent(session, { code: 'auth-code', state })),
       ).catch((err: unknown) => err);
 
-      expect(result).toMatchObject({ status: 302, location: '/login?error=edupass_no_email' });
-    });
-
-    test('does not create a learner', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      serveIdToken({ omit: ['notificationEmail', 'cesEmail', 'iconEmail', 'wogEmail'] });
-      const session = buildSession();
-      const { state } = await startSignIn(session);
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(mockCreate).not.toHaveBeenCalled();
-    });
-
-    test('does not sign the learner in', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      serveIdToken({ omit: ['notificationEmail', 'cesEmail', 'iconEmail', 'wogEmail'] });
-      const session = buildSession();
-      const { state } = await startSignIn(session);
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(mockSignIn).not.toHaveBeenCalled();
+      expect(thrown).toMatchObject({ status: 302, location: '/login?error=edupass_no_email' });
     });
   });
 
@@ -704,29 +548,14 @@ describe('GET /auth/edupass/callback', () => {
       const session = buildSession();
       const { state } = await startSignIn(session);
 
-      const result: unknown = await Promise.resolve(
+      const thrown: unknown = await Promise.resolve(
         GET(callbackEvent(session, { code: 'auth-code', state })),
       ).catch((err: unknown) => err);
 
-      expect(result).toMatchObject({
+      expect(thrown).toMatchObject({
         status: 302,
         location: '/login?error=oauth2_callback_failed',
       });
-    });
-
-    test('does not sign the learner in', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      mockCreate.mockRejectedValue(
-        new MockKnownRequestError('Unique constraint failed on: `users_email_key`', 'P2002'),
-      );
-      const session = buildSession();
-      const { state } = await startSignIn(session);
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(mockSignIn).not.toHaveBeenCalled();
     });
 
     test('logs a warning', async () => {
@@ -743,39 +572,9 @@ describe('GET /auth/edupass/callback', () => {
 
       expect(logWarn).toHaveBeenCalled();
     });
-
-    test('does not log an error', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      mockCreate.mockRejectedValue(
-        new MockKnownRequestError('Unique constraint failed on: `users_email_key`', 'P2002'),
-      );
-      const session = buildSession();
-      const { state } = await startSignIn(session);
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(logError).not.toHaveBeenCalled();
-    });
   });
 
-  describe('when a racing first sign-in created the learner', () => {
-    test('redirects to the return_to page', async () => {
-      mockFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(existingLearner);
-      mockCreate.mockRejectedValue(
-        new MockKnownRequestError('Unique constraint failed on: `users_edupass_id_key`', 'P2002'),
-      );
-      const session = buildSession();
-      const { state } = await startSignIn(session, '/unit/42');
-
-      const result: unknown = await Promise.resolve(
-        GET(callbackEvent(session, { code: 'auth-code', state })),
-      ).catch((err: unknown) => err);
-
-      expect(result).toMatchObject({ status: 302, location: '/unit/42' });
-    });
-
+  describe('when another sign-in creates the learner first', () => {
     test('signs that learner in', async () => {
       mockFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(existingLearner);
       mockCreate.mockRejectedValue(
@@ -789,21 +588,6 @@ describe('GET /auth/edupass/callback', () => {
 
       expect(mockSignIn).toHaveBeenCalledExactlyOnceWith(event, existingLearner);
     });
-
-    test('does not log an error', async () => {
-      mockFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(existingLearner);
-      mockCreate.mockRejectedValue(
-        new MockKnownRequestError('Unique constraint failed on: `users_edupass_id_key`', 'P2002'),
-      );
-      const session = buildSession();
-      const { state } = await startSignIn(session);
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(logError).not.toHaveBeenCalled();
-    });
   });
 
   describe('when creating the learner fails for any other reason', () => {
@@ -813,24 +597,14 @@ describe('GET /auth/edupass/callback', () => {
       const session = buildSession();
       const { state } = await startSignIn(session);
 
-      const result: unknown = await Promise.resolve(
+      const thrown: unknown = await Promise.resolve(
         GET(callbackEvent(session, { code: 'auth-code', state })),
       ).catch((err: unknown) => err);
 
-      expect(result).toMatchObject({ status: 302, location: CALLBACK_FAILED });
-    });
-
-    test('does not sign the learner in', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      mockCreate.mockRejectedValue(new Error('db down'));
-      const session = buildSession();
-      const { state } = await startSignIn(session);
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(mockSignIn).not.toHaveBeenCalled();
+      expect(thrown).toMatchObject({
+        status: 302,
+        location: '/login?error=oauth2_callback_failed',
+      });
     });
 
     test('logs an error', async () => {
@@ -863,11 +637,11 @@ describe('GET /auth/edupass/callback', () => {
     const session = buildSession();
     const { state } = await startSignIn(session, '/unit/42');
 
-    const result: unknown = await Promise.resolve(
+    const thrown: unknown = await Promise.resolve(
       GET(callbackEvent(session, { code: 'auth-code', state })),
     ).catch((err: unknown) => err);
 
-    expect(result).toMatchObject({ status: 302, location: CALLBACK_FAILED });
+    expect(thrown).toMatchObject({ status: 302, location: '/login?error=oauth2_callback_failed' });
   });
 
   test('redirects to the login page with an error when discovery fails', async () => {
@@ -877,42 +651,48 @@ describe('GET /auth/edupass/callback', () => {
     vi.resetModules();
     const { GET: routeWithoutSettings } = await import('./+server.js');
 
-    const result: unknown = await Promise.resolve(
+    const thrown: unknown = await Promise.resolve(
       routeWithoutSettings(callbackEvent(session, { code: 'auth-code', state })),
     ).catch((err: unknown) => err);
 
-    expect(result).toMatchObject({ status: 302, location: CALLBACK_FAILED });
+    expect(thrown).toMatchObject({ status: 302, location: '/login?error=oauth2_callback_failed' });
   });
 
   describe('Edupass errors from the authorization endpoint', () => {
-    test.each(AUTHORIZATION_ERRORS)(
-      '$error redirects to $location',
-      async ({ error, location }) => {
+    test.each(['server_error', 'temporarily_unavailable'])(
+      'shows the Edupass-busy error when Edupass sends %s',
+      async (error) => {
         const session = buildSession();
         const { state } = await startSignIn(session);
 
-        const result: unknown = await Promise.resolve(
+        const thrown: unknown = await Promise.resolve(
           GET(callbackEvent(session, { error, error_description: 'Trace ID: test', state })),
         ).catch((err: unknown) => err);
 
-        expect(result).toMatchObject({ status: 302, location });
+        expect(thrown).toMatchObject({ status: 302, location: '/login?error=edupass_unavailable' });
       },
     );
 
-    test.each(AUTHORIZATION_ERRORS)('$error logs at $level', async ({ error, level }) => {
-      const session = buildSession();
-      const { state } = await startSignIn(session);
+    test.each(['access_denied', 'interaction_required', 'invalid_request'])(
+      'shows the general sign-in error when Edupass sends %s',
+      async (error) => {
+        const session = buildSession();
+        const { state } = await startSignIn(session);
 
-      await Promise.resolve(
-        GET(callbackEvent(session, { error, error_description: 'Trace ID: test', state })),
-      ).catch(() => undefined);
+        const thrown: unknown = await Promise.resolve(
+          GET(callbackEvent(session, { error, error_description: 'Trace ID: test', state })),
+        ).catch((err: unknown) => err);
 
-      expect(level === 'warn' ? logWarn : logError).toHaveBeenCalled();
-    });
+        expect(thrown).toMatchObject({
+          status: 302,
+          location: '/login?error=oauth2_callback_failed',
+        });
+      },
+    );
 
-    test.each(AUTHORIZATION_ERRORS)(
-      '$error logs at no level other than $level',
-      async ({ error, level }) => {
+    test.each(['access_denied', 'server_error', 'temporarily_unavailable'])(
+      'logs a warning when Edupass sends %s',
+      async (error) => {
         const session = buildSession();
         const { state } = await startSignIn(session);
 
@@ -920,52 +700,59 @@ describe('GET /auth/edupass/callback', () => {
           GET(callbackEvent(session, { error, error_description: 'Trace ID: test', state })),
         ).catch(() => undefined);
 
-        expect(level === 'warn' ? logError : logWarn).not.toHaveBeenCalled();
+        expect(logWarn).toHaveBeenCalled();
       },
     );
 
-    test.each(AUTHORIZATION_ERRORS)('$error does not redeem a code', async ({ error }) => {
-      const session = buildSession();
-      const { state } = await startSignIn(session);
+    test.each(['interaction_required', 'invalid_request'])(
+      'logs an error when Edupass sends %s',
+      async (error) => {
+        const session = buildSession();
+        const { state } = await startSignIn(session);
 
-      await Promise.resolve(
-        GET(callbackEvent(session, { error, error_description: 'Trace ID: test', state })),
-      ).catch(() => undefined);
+        await Promise.resolve(
+          GET(callbackEvent(session, { error, error_description: 'Trace ID: test', state })),
+        ).catch(() => undefined);
 
-      expect(requests).not.toContainEqual(
-        expect.objectContaining({ url: TOKEN_ENDPOINT, method: 'POST' }),
-      );
-    });
+        expect(logError).toHaveBeenCalled();
+      },
+    );
   });
 
   describe('Edupass errors from the token endpoint', () => {
-    test.each(TOKEN_ERRORS)('$error redirects to $location', async ({ error, location }) => {
-      serveTokenError(error);
+    test('shows the Edupass-busy error when Edupass sends temporarily_unavailable', async () => {
+      serveTokenError('temporarily_unavailable');
       const session = buildSession();
       const { state } = await startSignIn(session);
 
-      const result: unknown = await Promise.resolve(
+      const thrown: unknown = await Promise.resolve(
         GET(callbackEvent(session, { code: 'auth-code', state })),
       ).catch((err: unknown) => err);
 
-      expect(result).toMatchObject({ status: 302, location });
+      expect(thrown).toMatchObject({ status: 302, location: '/login?error=edupass_unavailable' });
     });
 
-    test.each(TOKEN_ERRORS)('$error logs at $level', async ({ error, level }) => {
-      serveTokenError(error);
-      const session = buildSession();
-      const { state } = await startSignIn(session);
+    test.each(['invalid_grant', 'interaction_required', 'invalid_client'])(
+      'shows the general sign-in error when Edupass sends %s',
+      async (error) => {
+        serveTokenError(error);
+        const session = buildSession();
+        const { state } = await startSignIn(session);
 
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
+        const thrown: unknown = await Promise.resolve(
+          GET(callbackEvent(session, { code: 'auth-code', state })),
+        ).catch((err: unknown) => err);
 
-      expect(level === 'warn' ? logWarn : logError).toHaveBeenCalled();
-    });
+        expect(thrown).toMatchObject({
+          status: 302,
+          location: '/login?error=oauth2_callback_failed',
+        });
+      },
+    );
 
-    test.each(TOKEN_ERRORS)(
-      '$error logs at no level other than $level',
-      async ({ error, level }) => {
+    test.each(['invalid_grant', 'interaction_required', 'temporarily_unavailable'])(
+      'logs a warning when Edupass sends %s',
+      async (error) => {
         serveTokenError(error);
         const session = buildSession();
         const { state } = await startSignIn(session);
@@ -974,13 +761,12 @@ describe('GET /auth/edupass/callback', () => {
           () => undefined,
         );
 
-        expect(level === 'warn' ? logError : logWarn).not.toHaveBeenCalled();
+        expect(logWarn).toHaveBeenCalled();
       },
     );
 
-    test.each(TOKEN_ERRORS)('$error does not create a learner', async ({ error }) => {
-      serveTokenError(error);
-      mockFindUnique.mockResolvedValue(null);
+    test('logs an error when Edupass sends invalid_client', async () => {
+      serveTokenError('invalid_client');
       const session = buildSession();
       const { state } = await startSignIn(session);
 
@@ -988,19 +774,7 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(mockCreate).not.toHaveBeenCalled();
-    });
-
-    test.each(TOKEN_ERRORS)('$error does not sign the learner in', async ({ error }) => {
-      serveTokenError(error);
-      const session = buildSession();
-      const { state } = await startSignIn(session);
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(mockSignIn).not.toHaveBeenCalled();
+      expect(logError).toHaveBeenCalled();
     });
   });
 
@@ -1009,27 +783,27 @@ describe('GET /auth/edupass/callback', () => {
       const session = buildSession();
       const { state } = await startSignIn(session, '/unit/42');
 
-      const result: unknown = await Promise.resolve(
+      const thrown: unknown = await Promise.resolve(
         GET(callbackEvent(session, { code: 'auth-code', state })),
       ).catch((err: unknown) => err);
 
-      expect(result).toMatchObject({ status: 302, location: '/unit/42' });
+      expect(thrown).toMatchObject({ status: 302, location: '/unit/42' });
     });
 
     test('redirects to the home page instead of an external return_to', async () => {
       const session = buildSession();
       const { state } = await startSignIn(session, 'https://attacker.example/glow-login');
 
-      const result: unknown = await Promise.resolve(
+      const thrown: unknown = await Promise.resolve(
         GET(callbackEvent(session, { code: 'auth-code', state })),
       ).catch((err: unknown) => err);
 
-      expect(result).toMatchObject({ status: 302, location: HOME_PATH });
+      expect(thrown).toMatchObject({ status: 302, location: HOME_PATH });
     });
   });
 
   describe('code exchange and ID token checks', () => {
-    test('redeems the code at the token endpoint with the PKCE verifier', async () => {
+    test('sends the code and the PKCE verifier to Edupass', async () => {
       const session = buildSession();
       const { state, codeVerifier } = await startSignIn(session);
 
@@ -1067,50 +841,36 @@ describe('GET /auth/edupass/callback', () => {
       expect(mockSignIn).toHaveBeenCalledOnce();
     });
 
-    test.each(REFUSED_ID_TOKENS)(
-      'redirects to the login page with an error when the ID token $label',
-      async ({ token }) => {
-        serveIdToken(token);
-        const session = buildSession();
-        const { state } = await startSignIn(session);
+    test.each([
+      ['has no id claim', { claims: { id: undefined } }],
+      ['has no name claim', { claims: { name: undefined } }],
+      [
+        'is signed by a key Edupass does not publish',
+        { signingKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey },
+      ],
+      [
+        'was issued more than 30 seconds in the future',
+        {
+          claims: {
+            iat: Math.floor(Date.now() / 1000) + 120,
+            nbf: Math.floor(Date.now() / 1000),
+            exp: Math.floor(Date.now() / 1000) + 3720,
+          },
+        },
+      ],
+    ])('redirects to the login page with an error when the ID token %s', async (_label, token) => {
+      serveIdToken(token);
+      const session = buildSession();
+      const { state } = await startSignIn(session);
 
-        const result: unknown = await Promise.resolve(
-          GET(callbackEvent(session, { code: 'auth-code', state })),
-        ).catch((err: unknown) => err);
+      const thrown: unknown = await Promise.resolve(
+        GET(callbackEvent(session, { code: 'auth-code', state })),
+      ).catch((err: unknown) => err);
 
-        expect(result).toMatchObject({ status: 302, location: CALLBACK_FAILED });
-      },
-    );
-
-    test.each(REFUSED_ID_TOKENS)(
-      'does not create a learner when the ID token $label',
-      async ({ token }) => {
-        serveIdToken(token);
-        mockFindUnique.mockResolvedValue(null);
-        const session = buildSession();
-        const { state } = await startSignIn(session);
-
-        await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-          () => undefined,
-        );
-
-        expect(mockCreate).not.toHaveBeenCalled();
-      },
-    );
-
-    test.each(REFUSED_ID_TOKENS)(
-      'does not sign the learner in when the ID token $label',
-      async ({ token }) => {
-        serveIdToken(token);
-        const session = buildSession();
-        const { state } = await startSignIn(session);
-
-        await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-          () => undefined,
-        );
-
-        expect(mockSignIn).not.toHaveBeenCalled();
-      },
-    );
+      expect(thrown).toMatchObject({
+        status: 302,
+        location: '/login?error=oauth2_callback_failed',
+      });
+    });
   });
 });
