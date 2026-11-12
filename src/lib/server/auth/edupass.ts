@@ -2,14 +2,16 @@ import { createHash, createPrivateKey, type KeyObject, X509Certificate } from 'n
 
 import * as oauth from 'oauth4webapi';
 
-import { building } from '$app/environment';
 import { env } from '$env/dynamic/private';
+
+export const EDUPASS_REDIRECT_URL_PATH = '/auth/edupass/callback';
 
 interface Edupass {
   client: oauth.Client;
   issuer: URL;
   signingKey: CryptoKey;
   certificateThumbprint: string;
+  allowInsecureRequests: boolean;
 }
 
 let edupass: Edupass | undefined;
@@ -22,71 +24,93 @@ let discovery: Promise<oauth.AuthorizationServer> | null = null;
  * @throws Error when a setting is unset, invalid, or expired.
  */
 export async function loadEdupassSettings(): Promise<void> {
-  if (!building) {
-    const { EDUPASS_OIDC_URL, EDUPASS_CLIENT_ID, EDUPASS_CERTIFICATE, EDUPASS_PRIVATE_KEY } = env;
-    if (!EDUPASS_OIDC_URL) {
-      throw new Error('EDUPASS_OIDC_URL is not set.');
-    }
-    if (!EDUPASS_CLIENT_ID) {
-      throw new Error('EDUPASS_CLIENT_ID is not set.');
-    }
-    if (!EDUPASS_CERTIFICATE) {
-      throw new Error('EDUPASS_CERTIFICATE is not set.');
-    }
-    if (!EDUPASS_PRIVATE_KEY) {
-      throw new Error('EDUPASS_PRIVATE_KEY is not set.');
-    }
-
-    let issuer: URL;
-    try {
-      issuer = new URL(EDUPASS_OIDC_URL);
-    } catch (cause) {
-      throw new Error('EDUPASS_OIDC_URL is not a URL.', { cause });
-    }
-    let certificate: X509Certificate;
-    try {
-      certificate = new X509Certificate(EDUPASS_CERTIFICATE);
-    } catch (cause) {
-      throw new Error('EDUPASS_CERTIFICATE is not a PEM certificate.', { cause });
-    }
-    if (certificate.validToDate <= new Date()) {
-      throw new Error('EDUPASS_CERTIFICATE has expired.');
-    }
-    let privateKey: KeyObject;
-    try {
-      privateKey = createPrivateKey(EDUPASS_PRIVATE_KEY);
-    } catch (cause) {
-      throw new Error('EDUPASS_PRIVATE_KEY is not a PEM private key.', { cause });
-    }
-    if (!certificate.checkPrivateKey(privateKey)) {
-      throw new Error('EDUPASS_PRIVATE_KEY does not match EDUPASS_CERTIFICATE.');
-    }
-    // PS256 needs an RSA key of at least 2048 bits, as RFC 7518 section 3.5 requires.
-    // https://www.rfc-editor.org/rfc/rfc7518#section-3.5
-    const { asymmetricKeyDetails } = privateKey;
-    if (
-      privateKey.asymmetricKeyType !== 'rsa' ||
-      !asymmetricKeyDetails ||
-      !asymmetricKeyDetails.modulusLength ||
-      asymmetricKeyDetails.modulusLength < 2048
-    ) {
-      throw new Error('EDUPASS_PRIVATE_KEY must be an RSA key of at least 2048 bits.');
-    }
-
-    edupass = {
-      client: { client_id: EDUPASS_CLIENT_ID },
-      issuer,
-      certificateThumbprint: createHash('sha256').update(certificate.raw).digest('base64url'),
-      signingKey: await crypto.subtle.importKey(
-        'pkcs8',
-        privateKey.export({ format: 'der', type: 'pkcs8' }),
-        { name: 'RSA-PSS', hash: 'SHA-256' },
-        false,
-        ['sign'],
-      ),
-    };
-    discovery = null;
+  const {
+    EDUPASS_OIDC_URL,
+    EDUPASS_CLIENT_ID,
+    EDUPASS_CERTIFICATE,
+    EDUPASS_PRIVATE_KEY,
+    EDUPASS_ALLOW_INSECURE_REQUESTS,
+  } = env;
+  if (!EDUPASS_OIDC_URL) {
+    throw new Error('EDUPASS_OIDC_URL is not set.');
   }
+  if (!EDUPASS_CLIENT_ID) {
+    throw new Error('EDUPASS_CLIENT_ID is not set.');
+  }
+  if (!EDUPASS_CERTIFICATE) {
+    throw new Error('EDUPASS_CERTIFICATE is not set.');
+  }
+  if (!EDUPASS_PRIVATE_KEY) {
+    throw new Error('EDUPASS_PRIVATE_KEY is not set.');
+  }
+
+  let issuer: URL;
+  try {
+    issuer = new URL(EDUPASS_OIDC_URL);
+  } catch (cause) {
+    throw new Error('EDUPASS_OIDC_URL is not a URL.', { cause });
+  }
+  // Plain HTTP is for a mock Edupass server on this machine only, never a real Edupass.
+  const allowInsecureRequests = EDUPASS_ALLOW_INSECURE_REQUESTS === 'true';
+  if (allowInsecureRequests && issuer.hostname !== 'localhost') {
+    throw new Error('EDUPASS_ALLOW_INSECURE_REQUESTS needs a localhost EDUPASS_OIDC_URL.');
+  }
+  let certificate: X509Certificate;
+  try {
+    certificate = new X509Certificate(EDUPASS_CERTIFICATE);
+  } catch (cause) {
+    throw new Error('EDUPASS_CERTIFICATE is not a PEM certificate.', { cause });
+  }
+  if (certificate.validToDate <= new Date()) {
+    throw new Error('EDUPASS_CERTIFICATE has expired.');
+  }
+  let privateKey: KeyObject;
+  try {
+    privateKey = createPrivateKey(EDUPASS_PRIVATE_KEY);
+  } catch (cause) {
+    throw new Error('EDUPASS_PRIVATE_KEY is not a PEM private key.', { cause });
+  }
+  if (!certificate.checkPrivateKey(privateKey)) {
+    throw new Error('EDUPASS_PRIVATE_KEY does not match EDUPASS_CERTIFICATE.');
+  }
+  // PS256 needs an RSA key of at least 2048 bits, as RFC 7518 section 3.5 requires.
+  // https://www.rfc-editor.org/rfc/rfc7518#section-3.5
+  const { asymmetricKeyDetails } = privateKey;
+  if (
+    privateKey.asymmetricKeyType !== 'rsa' ||
+    !asymmetricKeyDetails ||
+    !asymmetricKeyDetails.modulusLength ||
+    asymmetricKeyDetails.modulusLength < 2048
+  ) {
+    throw new Error('EDUPASS_PRIVATE_KEY must be an RSA key of at least 2048 bits.');
+  }
+
+  edupass = {
+    client: { client_id: EDUPASS_CLIENT_ID },
+    issuer,
+    certificateThumbprint: createHash('sha256').update(certificate.raw).digest('base64url'),
+    signingKey: await crypto.subtle.importKey(
+      'pkcs8',
+      privateKey.export({ format: 'der', type: 'pkcs8' }),
+      { name: 'RSA-PSS', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    ),
+    allowInsecureRequests,
+  };
+  discovery = null;
+}
+
+/**
+ * Returns the options every oauth4webapi request to Edupass takes.
+ *
+ * @throws Error when the Edupass settings are not loaded.
+ */
+export function getEdupassRequestOptions(): { [oauth.allowInsecureRequests]: boolean } {
+  if (!edupass) {
+    throw new Error('Edupass settings are not loaded.');
+  }
+  return { [oauth.allowInsecureRequests]: edupass.allowInsecureRequests };
 }
 
 /**
@@ -131,12 +155,16 @@ export async function discoverEdupassAuthorizationServer(): Promise<oauth.Author
   if (!edupass) {
     throw new Error('Edupass settings are not loaded.');
   }
-  const { issuer } = edupass;
+  const { issuer, allowInsecureRequests } = edupass;
   if (!discovery) {
     // A failed discovery clears the cache, so the next sign-in retries instead of failing for the
     // life of the process.
     discovery = oauth
-      .discoveryRequest(issuer, { algorithm: 'oidc', signal: AbortSignal.timeout(10_000) })
+      .discoveryRequest(issuer, {
+        algorithm: 'oidc',
+        signal: AbortSignal.timeout(10_000),
+        [oauth.allowInsecureRequests]: allowInsecureRequests,
+      })
       .then((response) => oauth.processDiscoveryResponse(issuer, response))
       .catch((error: unknown) => {
         discovery = null;

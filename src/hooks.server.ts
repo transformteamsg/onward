@@ -1,11 +1,24 @@
-import { error, type Handle } from '@sveltejs/kit';
+import { error, type Handle, type ServerInit } from '@sveltejs/kit';
 
+import { building } from '$app/environment';
+import { loadEdupassSettings } from '$lib/server/auth/edupass.js';
 import { decodeRoutePathname } from '$lib/server/request-path.js';
 
 const route_specific_hooks = import.meta.glob('./routes/**/hooks.server.ts') as Record<
   string,
   () => Promise<{ handle: Handle }>
 >;
+
+/**
+ * Runs the startup checks once, before the server takes its first request.
+ *
+ * @throws Error when a check fails, which stops the server.
+ */
+export const init: ServerInit = async () => {
+  if (!building) {
+    await loadEdupassSettings();
+  }
+};
 
 export const handle: Handle = async function handle({ event, resolve }) {
   // Pick the realm from the decoded pathname, because that is the value SvelteKit

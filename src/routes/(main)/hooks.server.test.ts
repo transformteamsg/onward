@@ -130,15 +130,19 @@ describe('learner route protection', () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  test.each(['/login', '/auth/google', '/auth/google/callback', '/terms', '/privacy'])(
-    'lets %s through without a session',
-    async (pathname) => {
-      const { resolve, result } = await run(pathname);
+  test.each([
+    '/login',
+    '/auth/google',
+    '/auth/google/callback',
+    '/auth/edupass',
+    '/terms',
+    '/privacy',
+  ])('lets %s through without a session', async (pathname) => {
+    const { resolve, result } = await run(pathname);
 
-      await expect(result).resolves.toBeInstanceOf(Response);
-      expect(resolve).toHaveBeenCalledOnce();
-    },
-  );
+    await expect(result).resolves.toBeInstanceOf(Response);
+    expect(resolve).toHaveBeenCalledOnce();
+  });
 
   test('lets an /api/ path through without a session', async () => {
     const { resolve, result } = await run('/api/onboarding');

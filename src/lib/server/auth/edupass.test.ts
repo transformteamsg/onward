@@ -19,7 +19,7 @@ import {
 
 // Mutable env object: the module reads `$env/dynamic/private` when it loads the settings. Each
 // test changes only the setting it is about.
-const env: Record<string, string | undefined> = {};
+const env = vi.hoisted((): Record<string, string | undefined> => ({}));
 vi.mock('$env/dynamic/private', () => ({ env }));
 
 // Throwaway keys, made once per file. The openssl CLI makes each key with a self-signed
@@ -142,6 +142,7 @@ beforeEach(() => {
   env.EDUPASS_CLIENT_ID = CLIENT_ID;
   env.EDUPASS_CERTIFICATE = CERTIFICATE_PEM;
   env.EDUPASS_PRIVATE_KEY = PRIVATE_KEY_PEM;
+  env.EDUPASS_ALLOW_INSECURE_REQUESTS = undefined;
   vi.stubGlobal('fetch', fetchStub);
   // A fresh module per test, so each one starts with no settings and no cached discovery.
   vi.resetModules();
@@ -149,29 +150,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-  vi.doUnmock('$app/environment');
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
 describe('loadEdupassSettings', () => {
-  test('loads nothing during the build, so the build needs no settings', async () => {
-    vi.doMock('$app/environment', () => ({ building: true }));
-    for (const name of [
-      'EDUPASS_OIDC_URL',
-      'EDUPASS_CLIENT_ID',
-      'EDUPASS_CERTIFICATE',
-      'EDUPASS_PRIVATE_KEY',
-    ]) {
-      env[name] = undefined;
-    }
-    const { getEdupassClient, loadEdupassSettings } = await import('./edupass.js');
-
-    await loadEdupassSettings();
-
-    expect(() => getEdupassClient()).toThrow('Edupass settings are not loaded.');
-  });
-
   test.each([
     'EDUPASS_OIDC_URL',
     'EDUPASS_CLIENT_ID',
@@ -267,9 +250,51 @@ describe('loadEdupassSettings', () => {
       'EDUPASS_PRIVATE_KEY must be an RSA key of at least 2048 bits.',
     );
   });
+
+  test('refuses to start when insecure requests are allowed for an issuer that is not localhost', async () => {
+    env.EDUPASS_ALLOW_INSECURE_REQUESTS = 'true';
+    const { loadEdupassSettings } = await import('./edupass.js');
+
+    await expect(loadEdupassSettings()).rejects.toThrow(
+      'EDUPASS_ALLOW_INSECURE_REQUESTS needs a localhost EDUPASS_OIDC_URL.',
+    );
+  });
+});
+
+describe('getEdupassRequestOptions', () => {
+  test('refuses to return the options before the settings are loaded', async () => {
+    const { getEdupassRequestOptions } = await import('./edupass.js');
+
+    expect(() => getEdupassRequestOptions()).toThrow('Edupass settings are not loaded.');
+  });
+
+  test.each([
+    { value: undefined, expected: false },
+    { value: 'false', expected: false },
+    { value: 'true', expected: true },
+  ])(
+    'allows insecure requests is $expected when EDUPASS_ALLOW_INSECURE_REQUESTS is $value',
+    async ({ value, expected }) => {
+      env.EDUPASS_OIDC_URL = 'http://localhost:4000';
+      env.EDUPASS_ALLOW_INSECURE_REQUESTS = value;
+      const oauth = await import('oauth4webapi');
+      const { getEdupassRequestOptions, loadEdupassSettings } = await import('./edupass.js');
+      await loadEdupassSettings();
+
+      const options = getEdupassRequestOptions();
+
+      expect(options[oauth.allowInsecureRequests]).toBe(expected);
+    },
+  );
 });
 
 describe('getEdupassClient', () => {
+  test('refuses to return the client before the settings are loaded', async () => {
+    const { getEdupassClient } = await import('./edupass.js');
+
+    expect(() => getEdupassClient()).toThrow('Edupass settings are not loaded.');
+  });
+
   test('returns the client with the configured client ID', async () => {
     const { getEdupassClient, loadEdupassSettings } = await import('./edupass.js');
     await loadEdupassSettings();
@@ -301,6 +326,38 @@ describe('discoverEdupassAuthorizationServer', () => {
 
     expect(fetchStub).toHaveBeenCalledOnce();
     expect(second).toBe(first);
+  });
+
+  test('refuses to discover a plain HTTP issuer by default', async () => {
+    env.EDUPASS_OIDC_URL = 'http://localhost:4000';
+    const { discoverEdupassAuthorizationServer, loadEdupassSettings } = await import(
+      './edupass.js'
+    );
+    await loadEdupassSettings();
+
+    await expect(discoverEdupassAuthorizationServer()).rejects.toThrow(
+      'only requests to HTTPS are allowed',
+    );
+  });
+
+  test('discovers a plain HTTP localhost issuer when insecure requests are allowed', async () => {
+    env.EDUPASS_OIDC_URL = 'http://localhost:4000';
+    env.EDUPASS_ALLOW_INSECURE_REQUESTS = 'true';
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(JSON.stringify({ ...DISCOVERY_DOCUMENT, issuer: 'http://localhost:4000' }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    const { discoverEdupassAuthorizationServer, loadEdupassSettings } = await import(
+      './edupass.js'
+    );
+    await loadEdupassSettings();
+
+    const authorizationServer = await discoverEdupassAuthorizationServer();
+
+    expect(authorizationServer.issuer).toBe('http://localhost:4000');
   });
 
   test('shares one discovery between calls that start at the same time', async () => {
