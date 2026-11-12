@@ -56,6 +56,7 @@ const routeProtectionHandle: Handle = async ({ event, resolve }) => {
     routePathname === '/auth/google' ||
     routePathname === '/auth/google/callback' ||
     routePathname === '/auth/edupass' ||
+    routePathname === '/auth/edupass/callback' ||
     routePathname === '/terms' ||
     routePathname === '/privacy'
   ) {
