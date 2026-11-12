@@ -12,10 +12,6 @@
         return 'You can only sign in with an approved organisation account. Please try again with your work email.';
       case 'email_not_verified':
         return "Your Google account email isn't verified. Please verify it with Google, then try signing in again.";
-      case 'edupass_no_email':
-        return "Your Edupass account has no email address, so you can't sign in to Glow. Please contact your school's Edupass administrator.";
-      case 'edupass_unavailable':
-        return 'Edupass is busy right now. Please wait a moment, then try again.';
       default:
         return 'Something went wrong while signing you in. Please try again.';
     }

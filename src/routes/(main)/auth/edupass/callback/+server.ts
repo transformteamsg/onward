@@ -74,7 +74,7 @@ export const GET: RequestHandler = async (event) => {
     if (err instanceof oauth.AuthorizationResponseError) {
       if (err.error === 'server_error' || err.error === 'temporarily_unavailable') {
         logger.warn({ err }, 'Edupass is temporarily unavailable');
-        return redirect(302, '/login?error=edupass_unavailable');
+        return redirect(302, '/login?error=oauth2_callback_failed');
       }
       // The learner caused this error, not this app, so it is logged as a warning. The other codes
       // are app faults, including `interaction_required`, which Edupass sends here only for
@@ -116,7 +116,7 @@ export const GET: RequestHandler = async (event) => {
     if (err instanceof oauth.ResponseBodyError) {
       if (err.error === 'server_error' || err.error === 'temporarily_unavailable') {
         logger.warn({ err }, 'Edupass is temporarily unavailable');
-        return redirect(302, '/login?error=edupass_unavailable');
+        return redirect(302, '/login?error=oauth2_callback_failed');
       }
       // The learner caused these errors, not this app, so they are logged as warnings.
       if (err.error === 'invalid_grant' || err.error === 'interaction_required') {
@@ -174,7 +174,7 @@ export const GET: RequestHandler = async (event) => {
 
   if (!email) {
     logger.warn({ edupassId }, 'Rejected sign-in from an Edupass account with no email');
-    return redirect(302, '/login?error=edupass_no_email');
+    return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
   const userArgs = {

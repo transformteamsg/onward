@@ -448,7 +448,7 @@ describe('GET /auth/edupass/callback', () => {
   });
 
   describe('when the ID token has none of the four emails', () => {
-    test('redirects to the login page with the no-email error', async () => {
+    test('redirects to the login page with an error', async () => {
       mockFindUnique.mockResolvedValue(null);
       serveIdToken({
         claims: {
@@ -465,7 +465,10 @@ describe('GET /auth/edupass/callback', () => {
         GET(callbackEvent(session, { code: 'auth-code', state })),
       ).catch((err: unknown) => err);
 
-      expect(thrown).toMatchObject({ status: 302, location: '/login?error=edupass_no_email' });
+      expect(thrown).toMatchObject({
+        status: 302,
+        location: '/login?error=oauth2_callback_failed',
+      });
     });
   });
 
@@ -589,36 +592,25 @@ describe('GET /auth/edupass/callback', () => {
   });
 
   describe('Edupass errors from the authorization endpoint', () => {
-    test.each(['server_error', 'temporarily_unavailable'])(
-      'shows the Edupass-busy error when Edupass sends %s',
-      async (error) => {
-        const session = buildSession();
-        const state = startSignIn(session);
+    test.each([
+      'access_denied',
+      'server_error',
+      'temporarily_unavailable',
+      'interaction_required',
+      'invalid_request',
+    ])('shows the general sign-in error when Edupass sends %s', async (error) => {
+      const session = buildSession();
+      const state = startSignIn(session);
 
-        const thrown: unknown = await Promise.resolve(
-          GET(callbackEvent(session, { error, error_description: 'Trace ID: test', state })),
-        ).catch((err: unknown) => err);
+      const thrown: unknown = await Promise.resolve(
+        GET(callbackEvent(session, { error, error_description: 'Trace ID: test', state })),
+      ).catch((err: unknown) => err);
 
-        expect(thrown).toMatchObject({ status: 302, location: '/login?error=edupass_unavailable' });
-      },
-    );
-
-    test.each(['access_denied', 'interaction_required', 'invalid_request'])(
-      'shows the general sign-in error when Edupass sends %s',
-      async (error) => {
-        const session = buildSession();
-        const state = startSignIn(session);
-
-        const thrown: unknown = await Promise.resolve(
-          GET(callbackEvent(session, { error, error_description: 'Trace ID: test', state })),
-        ).catch((err: unknown) => err);
-
-        expect(thrown).toMatchObject({
-          status: 302,
-          location: '/login?error=oauth2_callback_failed',
-        });
-      },
-    );
+      expect(thrown).toMatchObject({
+        status: 302,
+        location: '/login?error=oauth2_callback_failed',
+      });
+    });
 
     test.each(['access_denied', 'server_error', 'temporarily_unavailable'])(
       'logs a warning when Edupass sends %s',
@@ -650,8 +642,13 @@ describe('GET /auth/edupass/callback', () => {
   });
 
   describe('Edupass errors from the token endpoint', () => {
-    test('shows the Edupass-busy error when Edupass sends temporarily_unavailable', async () => {
-      serveTokenError('temporarily_unavailable');
+    test.each([
+      'invalid_grant',
+      'interaction_required',
+      'temporarily_unavailable',
+      'invalid_client',
+    ])('shows the general sign-in error when Edupass sends %s', async (error) => {
+      serveTokenError(error);
       const session = buildSession();
       const state = startSignIn(session);
 
@@ -659,26 +656,11 @@ describe('GET /auth/edupass/callback', () => {
         GET(callbackEvent(session, { code: 'auth-code', state })),
       ).catch((err: unknown) => err);
 
-      expect(thrown).toMatchObject({ status: 302, location: '/login?error=edupass_unavailable' });
+      expect(thrown).toMatchObject({
+        status: 302,
+        location: '/login?error=oauth2_callback_failed',
+      });
     });
-
-    test.each(['invalid_grant', 'interaction_required', 'invalid_client'])(
-      'shows the general sign-in error when Edupass sends %s',
-      async (error) => {
-        serveTokenError(error);
-        const session = buildSession();
-        const state = startSignIn(session);
-
-        const thrown: unknown = await Promise.resolve(
-          GET(callbackEvent(session, { code: 'auth-code', state })),
-        ).catch((err: unknown) => err);
-
-        expect(thrown).toMatchObject({
-          status: 302,
-          location: '/login?error=oauth2_callback_failed',
-        });
-      },
-    );
 
     test.each(['invalid_grant', 'interaction_required', 'temporarily_unavailable'])(
       'logs a warning when Edupass sends %s',
