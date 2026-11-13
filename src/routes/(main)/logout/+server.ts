@@ -1,20 +1,17 @@
 import { error, redirect, type RequestHandler } from '@sveltejs/kit';
+import type { AuthorizationServer } from 'oauth4webapi';
 
+import { discoverEdupassAuthorizationServer, getEdupassClient } from '$lib/server/auth/edupass.js';
 import { learnerAuth } from '$lib/server/auth/index.js';
 import { type CloudfrontSignedCookiesOutput } from '$lib/server/cloudfront.js';
 
 /**
- * Signs the learner out.
+ * Signs the learner out of Glow, then redirects them to Edupass to sign out there too. Sign-out is
+ * a `POST` that carries the session CSRF token, so a cross-site page cannot force it.
  *
- * Sign-out changes state, so it is a `POST` that carries the session CSRF token. A `GET` handler
- * lets a third-party page end the session with a top-level navigation: the session cookie is
- * `sameSite: 'lax'`, so the browser sends it on a cross-site `GET` navigation. The token makes the
- * request unforgeable, because the CSRF cookie is `httpOnly` and a cross-origin page cannot read
- * it.
- *
- * Failures are reported as an error page, not as a redirect, so a rejected request never looks
- * like a successful sign-out. The `Accept` header of a browser form submission selects the HTML
- * error page over the JSON error body.
+ * @throws Redirect to the Edupass logout endpoint, or to the login page when Glow fails to end the
+ * session or cannot get the Edupass logout endpoint. Error 400 or 403 when the request or its CSRF
+ * token is invalid.
  */
 export const POST: RequestHandler = async (event) => {
   const logger = event.locals.logger.child({ handler: 'api_logout' });
@@ -63,5 +60,29 @@ export const POST: RequestHandler = async (event) => {
 
   logger.info({ email: user.email }, 'Successfully signed out user');
 
-  return redirect(303, '/login');
+  let authorizationServer: AuthorizationServer;
+  try {
+    authorizationServer = await discoverEdupassAuthorizationServer();
+  } catch (err) {
+    logger.warn(
+      { err, email: user.email, reason: 'Edupass discovery failed' },
+      'Signed out of Glow only: the learner is still signed in to Edupass',
+    );
+    return redirect(303, '/login');
+  }
+
+  const { end_session_endpoint } = authorizationServer;
+  if (!end_session_endpoint || !URL.canParse(end_session_endpoint)) {
+    logger.warn(
+      { email: user.email, reason: 'Edupass discovery has no valid end_session_endpoint' },
+      'Signed out of Glow only: the learner is still signed in to Edupass',
+    );
+    return redirect(303, '/login');
+  }
+
+  const logoutURL = new URL(end_session_endpoint);
+  logoutURL.searchParams.set('client_id', getEdupassClient().client_id);
+  logoutURL.searchParams.set('post_logout_redirect_uri', event.url.origin + '/login');
+
+  return redirect(303, logoutURL.href);
 };
