@@ -3,10 +3,13 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import * as handlers from './+server.js';
 import { POST } from './+server.js';
 
-const { mockSignOut, mockValidateCSRFToken } = vi.hoisted(() => ({
-  mockSignOut: vi.fn(),
-  mockValidateCSRFToken: vi.fn(),
-}));
+const { mockSignOut, mockValidateCSRFToken, mockDiscoverEdupassAuthorizationServer } = vi.hoisted(
+  () => ({
+    mockSignOut: vi.fn(),
+    mockValidateCSRFToken: vi.fn(),
+    mockDiscoverEdupassAuthorizationServer: vi.fn(),
+  }),
+);
 
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$lib/server/auth/index.js', () => ({
@@ -14,6 +17,10 @@ vi.mock('$lib/server/auth/index.js', () => ({
     signOut: mockSignOut,
     validateCSRFToken: mockValidateCSRFToken,
   },
+}));
+vi.mock('$lib/server/auth/edupass.js', () => ({
+  discoverEdupassAuthorizationServer: mockDiscoverEdupassAuthorizationServer,
+  getEdupassClient: () => ({ client_id: 'test-client-id' }),
 }));
 
 const silentLogger = {
@@ -43,6 +50,7 @@ const buildEvent = ({
 
   return {
     locals: { logger: silentLogger, session: { user } },
+    url: new URL('https://glow.test/logout'),
     cookies: { delete: vi.fn() },
     request: {
       formData: async () => {
@@ -60,6 +68,10 @@ beforeEach(() => {
   silentLogger.child.mockReturnValue(silentLogger);
   mockValidateCSRFToken.mockResolvedValue(true);
   mockSignOut.mockResolvedValue(undefined);
+  mockDiscoverEdupassAuthorizationServer.mockResolvedValue({
+    issuer: 'https://edupass.test',
+    end_session_endpoint: 'https://edupass.test/logout',
+  });
 });
 
 describe('POST /logout', () => {
@@ -105,12 +117,30 @@ describe('POST /logout', () => {
 
     const result = POST(event);
 
-    await expect(result).rejects.toMatchObject({ status: 303, location: '/login' });
+    await expect(result).rejects.toMatchObject({ status: 303 });
     expect(mockValidateCSRFToken).toHaveBeenCalledWith(event, 'csrf-token');
     expect(mockSignOut).toHaveBeenCalledOnce();
     for (const name of ['CloudFront-Policy', 'CloudFront-Signature', 'CloudFront-Key-Pair-Id']) {
       expect(event.cookies.delete).toHaveBeenCalledWith(name, { path: '/' });
     }
+  });
+
+  test('redirects to the Edupass logout endpoint with only the client ID and the login page', async () => {
+    const result = POST(buildEvent());
+
+    await expect(result).rejects.toMatchObject({
+      status: 303,
+      location:
+        'https://edupass.test/logout?client_id=test-client-id&post_logout_redirect_uri=https%3A%2F%2Fglow.test%2Flogin',
+    });
+  });
+
+  test('does not contact Edupass when sign-out fails', async () => {
+    mockSignOut.mockRejectedValue(new Error('valkey unavailable'));
+
+    await Promise.allSettled([POST(buildEvent())]);
+
+    expect(mockDiscoverEdupassAuthorizationServer).not.toHaveBeenCalled();
   });
 
   test('redirects with an error when sign-out fails', async () => {
