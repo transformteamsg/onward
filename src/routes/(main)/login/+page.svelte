@@ -3,23 +3,10 @@
   import { LinkButton } from '$lib/components/Button/index.js';
   import { HOME_PATH } from '$lib/helpers/index.js';
 
-  const ERROR_MESSAGES: Record<string, string> = {
-    domain_not_allowed:
-      'You can only sign in with an approved organisation account. Please try again with your work email.',
-    email_not_verified:
-      "Your Google account email isn't verified. Please verify it with Google, then try signing in again.",
-  };
   const GENERIC_ERROR_MESSAGE = 'Something went wrong while signing you in. Please try again.';
 
-  // Map the `error` query param to a user-facing message. Known codes get a
-  // tailored message; any other non-empty code falls back to the generic one.
-  const errorMessage = $derived.by(() => {
-    const error = page.url.searchParams.get('error');
-    if (!error) {
-      return null;
-    }
-    return ERROR_MESSAGES[error] ?? GENERIC_ERROR_MESSAGE;
-  });
+  // Any non-empty `error` query param shows the generic sign-in error.
+  const errorMessage = $derived(page.url.searchParams.get('error') ? GENERIC_ERROR_MESSAGE : null);
 </script>
 
 <main class="flex min-h-svh flex-col">

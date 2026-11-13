@@ -37,11 +37,17 @@ describe('login page', () => {
     );
   });
 
-  test('shows a general sign-in error for any other error code', () => {
+  test('shows the general sign-in error for any error code', () => {
     renderLogin('?error=oauth2_callback_failed');
 
     expect(screen.getByRole('alert')).toHaveTextContent(
       /^Something went wrong while signing you in\. Please try again\.$/,
     );
+  });
+
+  test('shows no error when no error code is given', () => {
+    renderLogin();
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
