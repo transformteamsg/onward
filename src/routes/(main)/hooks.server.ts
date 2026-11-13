@@ -27,7 +27,9 @@ const requestLoggingHandle: Handle = async ({ event, resolve }) => {
  * A handle that enforces authentication on protected routes.
  * - Requests to `/api/*` are always allowed through
  * - Authenticated users visiting `/login` are redirected back to `/`
- * - Unauthenticated users are redirected to `/login`
+ * - Unauthenticated users can reach `/login`, `/auth/edupass`, `/auth/edupass/callback`,
+ *   `/terms`, and `/privacy`
+ * - Unauthenticated users are redirected to `/login` for every other route
  */
 const routeProtectionHandle: Handle = async ({ event, resolve }) => {
   // Compare the decoded pathname, because SvelteKit matches routes with it. The raw
@@ -53,8 +55,6 @@ const routeProtectionHandle: Handle = async ({ event, resolve }) => {
 
   if (
     routePathname === '/login' ||
-    routePathname === '/auth/google' ||
-    routePathname === '/auth/google/callback' ||
     routePathname === '/auth/edupass' ||
     routePathname === '/auth/edupass/callback' ||
     routePathname === '/terms' ||

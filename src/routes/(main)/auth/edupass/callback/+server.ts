@@ -16,6 +16,7 @@ import {
   type UserFindUniqueArgs,
   type UserGetPayload,
 } from '$lib/server/db.js';
+import { decodeRoutePathname } from '$lib/server/request-path.js';
 import { resolveReturnTo } from '$lib/server/return-to.js';
 
 import type { RequestHandler } from './$types';
@@ -245,11 +246,21 @@ export const GET: RequestHandler = async (event) => {
 
   // The state matched the one this server made, so it is always the base64url JSON from
   // `/auth/edupass`.
-  return redirect(
-    302,
-    resolveReturnTo(
-      JSON.parse(Buffer.from(state, 'base64url').toString('utf-8'))['return_to'],
-      HOME_PATH,
-    ),
+  const returnTo = resolveReturnTo(
+    JSON.parse(Buffer.from(state, 'base64url').toString('utf-8'))['return_to'],
+    HOME_PATH,
   );
+
+  // A sign-in never returns to a sign-in route under `/auth`: that page is missing or starts
+  // sign-in again.
+  const returnPathname = decodeRoutePathname(new URL(returnTo, event.url.origin).pathname);
+  if (
+    returnPathname === null ||
+    returnPathname === '/auth' ||
+    returnPathname.startsWith('/auth/')
+  ) {
+    return redirect(302, HOME_PATH);
+  }
+
+  return redirect(302, returnTo);
 };
