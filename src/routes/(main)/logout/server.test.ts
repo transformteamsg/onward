@@ -155,4 +155,60 @@ describe('POST /logout', () => {
     });
     expect(event.cookies.delete).not.toHaveBeenCalled();
   });
+
+  test('redirects to /login when Edupass discovery fails', async () => {
+    mockDiscoverEdupassAuthorizationServer.mockRejectedValue(new Error('fetch failed'));
+
+    const result = POST(buildEvent());
+
+    await expect(result).rejects.toMatchObject({ status: 303, location: '/login' });
+  });
+
+  test('warns that the learner is still signed in to Edupass when discovery fails', async () => {
+    mockDiscoverEdupassAuthorizationServer.mockRejectedValue(new Error('fetch failed'));
+
+    await Promise.allSettled([POST(buildEvent())]);
+
+    expect(silentLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'learner@example.com',
+        reason: 'Edupass discovery failed',
+      }),
+      'Signed out of Glow only: the learner is still signed in to Edupass',
+    );
+  });
+
+  test('redirects to /login when the Edupass logout endpoint is not a URL', async () => {
+    mockDiscoverEdupassAuthorizationServer.mockResolvedValue({
+      issuer: 'https://edupass.test',
+      end_session_endpoint: '/logout',
+    });
+
+    const result = POST(buildEvent());
+
+    await expect(result).rejects.toMatchObject({ status: 303, location: '/login' });
+  });
+
+  test('warns that Edupass discovery has no valid logout endpoint', async () => {
+    mockDiscoverEdupassAuthorizationServer.mockResolvedValue({
+      issuer: 'https://edupass.test',
+    });
+
+    await Promise.allSettled([POST(buildEvent())]);
+
+    expect(silentLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'Edupass discovery has no valid end_session_endpoint' }),
+      'Signed out of Glow only: the learner is still signed in to Edupass',
+    );
+  });
+
+  test('redirects to /login when Edupass discovery has no logout endpoint', async () => {
+    mockDiscoverEdupassAuthorizationServer.mockResolvedValue({
+      issuer: 'https://edupass.test',
+    });
+
+    const result = POST(buildEvent());
+
+    await expect(result).rejects.toMatchObject({ status: 303, location: '/login' });
+  });
 });

@@ -1,4 +1,5 @@
 import { error, redirect, type RequestHandler } from '@sveltejs/kit';
+import type { AuthorizationServer } from 'oauth4webapi';
 
 import { discoverEdupassAuthorizationServer, getEdupassClient } from '$lib/server/auth/edupass.js';
 import { learnerAuth } from '$lib/server/auth/index.js';
@@ -9,7 +10,8 @@ import { type CloudfrontSignedCookiesOutput } from '$lib/server/cloudfront.js';
  * a `POST` that carries the session CSRF token, so a cross-site page cannot force it.
  *
  * @throws Redirect to the Edupass logout endpoint, or to the login page when Glow fails to end the
- * session. Error 400 or 403 when the request or its CSRF token is invalid.
+ * session or cannot get the Edupass logout endpoint. Error 400 or 403 when the request or its CSRF
+ * token is invalid.
  */
 export const POST: RequestHandler = async (event) => {
   const logger = event.locals.logger.child({ handler: 'api_logout' });
@@ -58,9 +60,24 @@ export const POST: RequestHandler = async (event) => {
 
   logger.info({ email: user.email }, 'Successfully signed out user');
 
-  const { end_session_endpoint } = await discoverEdupassAuthorizationServer();
-  if (!end_session_endpoint) {
-    throw new Error('Edupass discovery has no end_session_endpoint.');
+  let authorizationServer: AuthorizationServer;
+  try {
+    authorizationServer = await discoverEdupassAuthorizationServer();
+  } catch (err) {
+    logger.warn(
+      { err, email: user.email, reason: 'Edupass discovery failed' },
+      'Signed out of Glow only: the learner is still signed in to Edupass',
+    );
+    return redirect(303, '/login');
+  }
+
+  const { end_session_endpoint } = authorizationServer;
+  if (!end_session_endpoint || !URL.canParse(end_session_endpoint)) {
+    logger.warn(
+      { email: user.email, reason: 'Edupass discovery has no valid end_session_endpoint' },
+      'Signed out of Glow only: the learner is still signed in to Edupass',
+    );
+    return redirect(303, '/login');
   }
 
   const logoutURL = new URL(end_session_endpoint);
