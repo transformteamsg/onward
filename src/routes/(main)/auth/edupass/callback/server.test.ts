@@ -712,6 +712,31 @@ describe('GET /auth/edupass/callback', () => {
 
       expect(thrown).toMatchObject({ status: 302, location: HOME_PATH });
     });
+
+    test.each(['/auth', '/auth/google', '/auth/edupass/callback?x=1', '/%61uth/google', '/%ZZ'])(
+      'redirects to the home page instead of %s',
+      async (returnTo) => {
+        const session = buildSession();
+        const state = startSignIn(session, returnTo);
+
+        const thrown: unknown = await Promise.resolve(
+          GET(callbackEvent(session, { code: 'auth-code', state })),
+        ).catch((err: unknown) => err);
+
+        expect(thrown).toMatchObject({ status: 302, location: HOME_PATH });
+      },
+    );
+
+    test('redirects to a return_to that only starts with the letters of /auth', async () => {
+      const session = buildSession();
+      const state = startSignIn(session, '/authors');
+
+      const thrown: unknown = await Promise.resolve(
+        GET(callbackEvent(session, { code: 'auth-code', state })),
+      ).catch((err: unknown) => err);
+
+      expect(thrown).toMatchObject({ status: 302, location: '/authors' });
+    });
   });
 
   describe('code exchange and ID token checks', () => {
