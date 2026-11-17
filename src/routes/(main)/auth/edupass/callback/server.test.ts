@@ -399,30 +399,9 @@ describe('GET /auth/edupass/callback', () => {
       });
     });
 
-    test.each([
-      [
-        'uses the notification email when there is no CES email',
-        { cesEmail: undefined },
-        'notify@example.com',
-      ],
-      [
-        'uses the notification email when the CES email is empty',
-        { cesEmail: '' },
-        'notify@example.com',
-      ],
-      [
-        'uses the ICON email when there is no CES or notification email',
-        { cesEmail: undefined, notificationEmail: undefined },
-        'icon@example.com',
-      ],
-      [
-        'uses the WOG email when it is the only email',
-        { cesEmail: undefined, notificationEmail: undefined, iconEmail: undefined },
-        'wog@example.com',
-      ],
-    ])('%s', async (_label, claims, expected) => {
+    test('uses the ICON email when there is no CES email', async () => {
       mockFindUnique.mockResolvedValue(null);
-      serveIdToken({ claims });
+      serveIdToken({ claims: { cesEmail: undefined } });
       const session = buildSession();
       const state = startSignIn(session);
 
@@ -430,7 +409,20 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(mockCreate.mock.lastCall?.[0].data.email).toBe(expected);
+      expect(mockCreate.mock.lastCall?.[0].data.email).toBe('icon@example.com');
+    });
+
+    test('uses the WOG email when the CES email is empty and there is no ICON email', async () => {
+      mockFindUnique.mockResolvedValue(null);
+      serveIdToken({ claims: { cesEmail: '', iconEmail: undefined } });
+      const session = buildSession();
+      const state = startSignIn(session);
+
+      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
+        () => undefined,
+      );
+
+      expect(mockCreate.mock.lastCall?.[0].data.email).toBe('wog@example.com');
     });
 
     test('lowercases the chosen email', async () => {
@@ -447,17 +439,9 @@ describe('GET /auth/edupass/callback', () => {
     });
   });
 
-  describe('when the ID token has none of the four emails', () => {
-    test('redirects to the login page with an error', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      serveIdToken({
-        claims: {
-          notificationEmail: undefined,
-          cesEmail: undefined,
-          iconEmail: undefined,
-          wogEmail: undefined,
-        },
-      });
+  describe('when the ID token has no CES, ICON or WOG email', () => {
+    test('redirects a learner who already has the Edupass ID to the login page with an error', async () => {
+      serveIdToken({ claims: { cesEmail: undefined, iconEmail: undefined, wogEmail: undefined } });
       const session = buildSession();
       const state = startSignIn(session);
 
