@@ -10,21 +10,16 @@ import {
   getEdupassRequestOptions,
 } from '$lib/server/auth/edupass.js';
 import { learnerAuth } from '$lib/server/auth/index.js';
-import {
-  db,
-  PrismaClientKnownRequestError,
-  type UserFindUniqueArgs,
-  type UserGetPayload,
-} from '$lib/server/db.js';
+import { db, type UserGetPayload, type UserUpsertArgs } from '$lib/server/db.js';
 import { decodeRoutePathname } from '$lib/server/request-path.js';
 import { resolveReturnTo } from '$lib/server/return-to.js';
 
 import type { RequestHandler } from './$types';
 
 /**
- * Completes Edupass sign-in. Checks the state, redeems the code for a validated ID token, finds or
- * creates the learner by Edupass ID, and starts the learner session. Every failure redirects to the
- * login page with an error code.
+ * Completes Edupass sign-in. Checks the state, redeems the code for a validated ID token, creates or
+ * updates the learner by Edupass ID with the name and email from the token, and starts the learner
+ * session. Every failure redirects to the login page with an error code.
  *
  * @throws Redirect to the `return_to` page on success, or to the login page with an error code.
  */
@@ -154,24 +149,28 @@ export const GET: RequestHandler = async (event) => {
   }
 
   // The learner is identified by the Edupass `id` claim, never the Entra `sub` claim.
-  const edupassId = claims['id'];
-  if (typeof edupassId !== 'string' || edupassId === '') {
+  if (typeof claims['id'] !== 'string' || claims['id'] === '') {
     logger.error('Edupass ID token missing claim: id');
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
-  const name = claims['name'];
-  if (typeof name !== 'string' || name === '') {
-    logger.error({ edupassId }, 'Edupass ID token missing claim: name');
+  if (typeof claims['name'] !== 'string' || claims['name'] === '') {
+    logger.error({ edupassId: claims['id'] }, 'Edupass ID token missing claim: name');
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
-  const email = claims['cesEmail'] || claims['iconEmail'] || claims['wogEmail'];
-
-  if (typeof email !== 'string' || email === '') {
+  // Edupass's email claims are nullable, so only a non-empty string counts as an email.
+  let email: string;
+  if (typeof claims['cesEmail'] === 'string' && claims['cesEmail'] !== '') {
+    email = claims['cesEmail'];
+  } else if (typeof claims['iconEmail'] === 'string' && claims['iconEmail'] !== '') {
+    email = claims['iconEmail'];
+  } else if (typeof claims['wogEmail'] === 'string' && claims['wogEmail'] !== '') {
+    email = claims['wogEmail'];
+  } else {
     logger.warn(
-      { edupassId },
-      'Rejected sign-in from an Edupass account with no CES, ICON or WOG email',
+      { edupassId: claims['id'] },
+      'Rejected sign-in from an Edupass account with no email',
     );
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
@@ -183,50 +182,27 @@ export const GET: RequestHandler = async (event) => {
       name: true,
     },
     where: {
-      edupassId,
+      edupassId: claims['id'],
     },
-  } satisfies UserFindUniqueArgs;
+    create: {
+      name: claims['name'],
+      email,
+      edupassId: claims['id'],
+    },
+    update: {
+      name: claims['name'],
+      email,
+    },
+  } satisfies UserUpsertArgs;
 
-  let user: UserGetPayload<typeof userArgs> | null;
+  // Edupass is the source of truth, so every sign-in overwrites the name and email. The email's
+  // unique index refuses an email another learner holds, and accounts are never joined.
+  let user: UserGetPayload<typeof userArgs>;
   try {
-    user = await db.user.findUnique(userArgs);
+    user = await db.user.upsert(userArgs);
   } catch (err) {
-    logger.error({ err, edupassId }, 'Failed to find user');
+    logger.error({ err, edupassId: claims['id'] }, 'Failed to save user');
     return redirect(302, '/login?error=oauth2_callback_failed');
-  }
-
-  if (!user) {
-    try {
-      user = await db.user.create({
-        data: {
-          name,
-          // Lowercased, because the unique index on `users.email` is case-sensitive.
-          email: email.toLowerCase(),
-          edupassId,
-        },
-        select: userArgs.select,
-      });
-    } catch (err) {
-      if (!(err instanceof PrismaClientKnownRequestError && err.code === 'P2002')) {
-        logger.error({ err, edupassId }, 'Failed to create user');
-        return redirect(302, '/login?error=oauth2_callback_failed');
-      }
-
-      // A unique index refused the insert. When a learner with this Edupass ID now exists, a
-      // second first sign-in created it first. Otherwise another learner holds the email, and
-      // accounts are never joined.
-      try {
-        user = await db.user.findUnique(userArgs);
-      } catch (findErr) {
-        logger.error({ err: findErr, edupassId }, 'Failed to find user');
-        return redirect(302, '/login?error=oauth2_callback_failed');
-      }
-      if (!user) {
-        logger.warn({ err, edupassId }, 'Rejected sign-in: the email belongs to another learner');
-        return redirect(302, '/login?error=oauth2_callback_failed');
-      }
-      logger.info({ edupassId }, 'Another sign-in created the user first');
-    }
   }
 
   try {
@@ -236,11 +212,11 @@ export const GET: RequestHandler = async (event) => {
       name: user.name,
     });
   } catch (err) {
-    logger.error({ err, edupassId }, 'Failed to sign in user');
+    logger.error({ err, edupassId: claims['id'] }, 'Failed to sign in user');
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
-  logger.info({ edupassId }, 'Successfully signed in user');
+  logger.info({ edupassId: claims['id'] }, 'Successfully signed in user');
 
   // The state matched the one this server made, so it is always the base64url JSON from
   // `/auth/edupass`.

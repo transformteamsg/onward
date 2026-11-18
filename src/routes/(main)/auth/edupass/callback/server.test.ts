@@ -13,20 +13,17 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi 
 
 import { HOME_PATH } from '$lib/helpers/index.js';
 
-const { mockSignIn, mockFindUnique, mockCreate, MockKnownRequestError } = vi.hoisted(() => ({
+const { mockSignIn, mockUpsert } = vi.hoisted(() => ({
   mockSignIn: vi.fn(),
-  mockFindUnique: vi.fn(),
-  // Typed with the `data` the route passes to `db.user.create`.
-  mockCreate: vi.fn<(args: { data: { email: string; name: string } }) => Promise<unknown>>(),
-  // Stands in for Prisma's known request error, which the route tells apart by its `code`.
-  MockKnownRequestError: class MockKnownRequestError extends Error {
-    code: string;
-
-    constructor(message: string, code: string) {
-      super(message);
-      this.code = code;
-    }
-  },
+  // Typed with the args the route passes to `db.user.upsert`.
+  mockUpsert:
+    vi.fn<
+      (args: {
+        where: { edupassId: string };
+        create: { name: string; email: string; edupassId: string };
+        update: { name: string; email: string };
+      }) => Promise<unknown>
+    >(),
 }));
 
 // Mutable env object: the Edupass module reads `$env/dynamic/private` when it loads the settings.
@@ -39,11 +36,9 @@ vi.mock('$env/dynamic/public', () => ({ env: {} }));
 vi.mock('$lib/server/db.js', () => ({
   db: {
     user: {
-      findUnique: mockFindUnique,
-      create: mockCreate,
+      upsert: mockUpsert,
     },
   },
-  PrismaClientKnownRequestError: MockKnownRequestError,
 }));
 
 const ISSUER = 'https://login.microsoftonline.com/test-tenant-0000/v2.0';
@@ -52,12 +47,6 @@ const JWKS_URI = 'https://login.microsoftonline.com/test-tenant-0000/discovery/v
 const CLIENT_ID = 'test-client-id-1111';
 
 const EDUPASS_ID = '000012345678';
-
-const existingLearner = {
-  id: '7',
-  email: 'notify@example.com',
-  name: 'Edupass Learner',
-};
 
 // The key Edupass signs ID tokens with, served from the fake `jwks_uri`.
 const idTokenKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -243,11 +232,10 @@ beforeEach(async () => {
     }
     return new Response('not found', { status: 404 });
   });
-  mockFindUnique.mockResolvedValue(existingLearner);
-  mockCreate.mockImplementation(async ({ data }) => ({
-    id: '8',
-    email: data.email,
-    name: data.name,
+  mockUpsert.mockImplementation(async ({ update }) => ({
+    id: '7',
+    email: update.email,
+    name: update.name,
   }));
   mockSignIn.mockResolvedValue(undefined);
 
@@ -331,8 +319,8 @@ describe('GET /auth/edupass/callback', () => {
     });
   });
 
-  describe('when a learner has the same Edupass ID', () => {
-    test('looks the learner up by the Edupass ID', async () => {
+  describe('saving the learner', () => {
+    test('finds the learner by the Edupass ID', async () => {
       const session = buildSession();
       const state = startSignIn(session);
 
@@ -340,12 +328,10 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(mockFindUnique).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { edupassId: EDUPASS_ID } }),
-      );
+      expect(mockUpsert.mock.lastCall?.[0].where).toEqual({ edupassId: EDUPASS_ID });
     });
 
-    test('does not create a learner', async () => {
+    test('creates a missing learner with the Edupass ID, name and chosen email', async () => {
       const session = buildSession();
       const state = startSignIn(session);
 
@@ -353,39 +339,28 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(mockCreate).not.toHaveBeenCalled();
-    });
-
-    test('signs that learner in', async () => {
-      const session = buildSession();
-      const state = startSignIn(session);
-      const event = callbackEvent(session, { code: 'auth-code', state });
-
-      await Promise.resolve(GET(event)).catch(() => undefined);
-
-      expect(mockSignIn).toHaveBeenCalledExactlyOnceWith(event, existingLearner);
-    });
-  });
-
-  describe('when no learner has the Edupass ID', () => {
-    test('creates a learner with the Edupass ID, name and chosen email', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      const session = buildSession();
-      const state = startSignIn(session);
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(mockCreate.mock.lastCall?.[0].data).toEqual({
+      expect(mockUpsert.mock.lastCall?.[0].create).toEqual({
         edupassId: EDUPASS_ID,
         name: 'Edupass Learner',
         email: 'ces@example.com',
       });
     });
 
-    test('signs the new learner in', async () => {
-      mockFindUnique.mockResolvedValue(null);
+    test('updates an existing learner with the name and chosen email', async () => {
+      const session = buildSession();
+      const state = startSignIn(session);
+
+      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
+        () => undefined,
+      );
+
+      expect(mockUpsert.mock.lastCall?.[0].update).toEqual({
+        name: 'Edupass Learner',
+        email: 'ces@example.com',
+      });
+    });
+
+    test('signs the saved learner in', async () => {
       const session = buildSession();
       const state = startSignIn(session);
       const event = callbackEvent(session, { code: 'auth-code', state });
@@ -393,14 +368,13 @@ describe('GET /auth/edupass/callback', () => {
       await Promise.resolve(GET(event)).catch(() => undefined);
 
       expect(mockSignIn).toHaveBeenCalledExactlyOnceWith(event, {
-        id: '8',
+        id: '7',
         email: 'ces@example.com',
         name: 'Edupass Learner',
       });
     });
 
     test('uses the ICON email when there is no CES email', async () => {
-      mockFindUnique.mockResolvedValue(null);
       serveIdToken({ claims: { cesEmail: undefined } });
       const session = buildSession();
       const state = startSignIn(session);
@@ -409,12 +383,11 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(mockCreate.mock.lastCall?.[0].data.email).toBe('icon@example.com');
+      expect(mockUpsert.mock.lastCall?.[0].update.email).toBe('icon@example.com');
     });
 
-    test('uses the WOG email when the CES email is empty and there is no ICON email', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      serveIdToken({ claims: { cesEmail: '', iconEmail: undefined } });
+    test('uses the WOG email when the CES and ICON emails are empty', async () => {
+      serveIdToken({ claims: { cesEmail: '', iconEmail: '' } });
       const session = buildSession();
       const state = startSignIn(session);
 
@@ -422,11 +395,10 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(mockCreate.mock.lastCall?.[0].data.email).toBe('wog@example.com');
+      expect(mockUpsert.mock.lastCall?.[0].update.email).toBe('wog@example.com');
     });
 
-    test('lowercases the chosen email', async () => {
-      mockFindUnique.mockResolvedValue(null);
+    test('stores the chosen email as Edupass sends it', async () => {
       serveIdToken({ claims: { cesEmail: 'John.Tan@Example.COM' } });
       const session = buildSession();
       const state = startSignIn(session);
@@ -435,12 +407,12 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(mockCreate.mock.lastCall?.[0].data.email).toBe('john.tan@example.com');
+      expect(mockUpsert.mock.lastCall?.[0].update.email).toBe('John.Tan@Example.COM');
     });
   });
 
-  describe('when the ID token has no CES, ICON or WOG email', () => {
-    test('redirects a learner who already has the Edupass ID to the login page with an error', async () => {
+  describe('when the ID token has no email', () => {
+    test('redirects to the login page with an error', async () => {
       serveIdToken({ claims: { cesEmail: undefined, iconEmail: undefined, wogEmail: undefined } });
       const session = buildSession();
       const state = startSignIn(session);
@@ -455,7 +427,7 @@ describe('GET /auth/edupass/callback', () => {
       });
     });
 
-    test('redirects to the login page with an error when every email is empty', async () => {
+    test('treats every empty email as missing', async () => {
       serveIdToken({ claims: { cesEmail: '', iconEmail: '', wogEmail: '' } });
       const session = buildSession();
       const state = startSignIn(session);
@@ -471,61 +443,10 @@ describe('GET /auth/edupass/callback', () => {
     });
   });
 
-  describe('when the email already belongs to another learner', () => {
+  // The usual cause is another learner already holding the chosen email.
+  describe('when saving the learner fails', () => {
     test('redirects to the login page with an error', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      mockCreate.mockRejectedValue(
-        new MockKnownRequestError('Unique constraint failed on: `users_email_key`', 'P2002'),
-      );
-      const session = buildSession();
-      const state = startSignIn(session);
-
-      const thrown: unknown = await Promise.resolve(
-        GET(callbackEvent(session, { code: 'auth-code', state })),
-      ).catch((err: unknown) => err);
-
-      expect(thrown).toMatchObject({
-        status: 302,
-        location: '/login?error=oauth2_callback_failed',
-      });
-    });
-
-    test('logs a warning', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      mockCreate.mockRejectedValue(
-        new MockKnownRequestError('Unique constraint failed on: `users_email_key`', 'P2002'),
-      );
-      const session = buildSession();
-      const state = startSignIn(session);
-
-      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
-        () => undefined,
-      );
-
-      expect(logWarn).toHaveBeenCalled();
-    });
-  });
-
-  describe('when another sign-in creates the learner first', () => {
-    test('signs that learner in', async () => {
-      mockFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(existingLearner);
-      mockCreate.mockRejectedValue(
-        new MockKnownRequestError('Unique constraint failed on: `users_edupass_id_key`', 'P2002'),
-      );
-      const session = buildSession();
-      const state = startSignIn(session);
-      const event = callbackEvent(session, { code: 'auth-code', state });
-
-      await Promise.resolve(GET(event)).catch(() => undefined);
-
-      expect(mockSignIn).toHaveBeenCalledExactlyOnceWith(event, existingLearner);
-    });
-  });
-
-  describe('when creating the learner fails for any other reason', () => {
-    test('redirects to the login page with an error', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      mockCreate.mockRejectedValue(new Error('db down'));
+      mockUpsert.mockRejectedValue(new Error('Unique constraint failed on the fields: (`email`)'));
       const session = buildSession();
       const state = startSignIn(session);
 
@@ -540,8 +461,7 @@ describe('GET /auth/edupass/callback', () => {
     });
 
     test('logs an error', async () => {
-      mockFindUnique.mockResolvedValue(null);
-      mockCreate.mockRejectedValue(new Error('db down'));
+      mockUpsert.mockRejectedValue(new Error('Unique constraint failed on the fields: (`email`)'));
       const session = buildSession();
       const state = startSignIn(session);
 
@@ -549,12 +469,23 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(logError).toHaveBeenCalled();
+      expect(logError).toHaveBeenCalledWith(expect.anything(), 'Failed to save user');
+    });
+
+    test('does not sign the learner in', async () => {
+      mockUpsert.mockRejectedValue(new Error('Unique constraint failed on the fields: (`email`)'));
+      const session = buildSession();
+      const state = startSignIn(session);
+
+      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
+        () => undefined,
+      );
+
+      expect(mockSignIn).not.toHaveBeenCalled();
     });
   });
 
   test.each([
-    ['the learner lookup fails', () => mockFindUnique.mockRejectedValue(new Error('db down'))],
     ['starting the session fails', () => mockSignIn.mockRejectedValue(new Error('valkey down'))],
     [
       'the token request fails',
