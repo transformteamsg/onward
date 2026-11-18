@@ -198,8 +198,7 @@ export const GET: RequestHandler = async (event) => {
       user = await db.user.create({
         data: {
           name: claims['name'],
-          // Lowercased, because the unique index on `users.email` is case-sensitive.
-          email: email.toLowerCase(),
+          email,
           edupassId: claims['id'],
         },
         select: userArgs.select,

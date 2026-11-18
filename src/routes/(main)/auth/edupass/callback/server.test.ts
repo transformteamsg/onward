@@ -425,7 +425,7 @@ describe('GET /auth/edupass/callback', () => {
       expect(mockCreate.mock.lastCall?.[0].data.email).toBe('wog@example.com');
     });
 
-    test('lowercases the chosen email', async () => {
+    test('stores the chosen email as Edupass sends it', async () => {
       mockFindUnique.mockResolvedValue(null);
       serveIdToken({ claims: { cesEmail: 'John.Tan@Example.COM' } });
       const session = buildSession();
@@ -435,7 +435,7 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(mockCreate.mock.lastCall?.[0].data.email).toBe('john.tan@example.com');
+      expect(mockCreate.mock.lastCall?.[0].data.email).toBe('John.Tan@Example.COM');
     });
   });
 
