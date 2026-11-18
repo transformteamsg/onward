@@ -412,9 +412,9 @@ describe('GET /auth/edupass/callback', () => {
       expect(mockCreate.mock.lastCall?.[0].data.email).toBe('icon@example.com');
     });
 
-    test('uses the WOG email when the CES email is empty and there is no ICON email', async () => {
+    test('uses the WOG email when the CES and ICON emails are empty', async () => {
       mockFindUnique.mockResolvedValue(null);
-      serveIdToken({ claims: { cesEmail: '', iconEmail: undefined } });
+      serveIdToken({ claims: { cesEmail: '', iconEmail: '' } });
       const session = buildSession();
       const state = startSignIn(session);
 
@@ -439,9 +439,24 @@ describe('GET /auth/edupass/callback', () => {
     });
   });
 
-  describe('when the ID token has no CES, ICON or WOG email', () => {
-    test('redirects a learner who already has the Edupass ID to the login page with an error', async () => {
+  describe('when the ID token has no email', () => {
+    test('redirects to the login page with an error', async () => {
       serveIdToken({ claims: { cesEmail: undefined, iconEmail: undefined, wogEmail: undefined } });
+      const session = buildSession();
+      const state = startSignIn(session);
+
+      const thrown: unknown = await Promise.resolve(
+        GET(callbackEvent(session, { code: 'auth-code', state })),
+      ).catch((err: unknown) => err);
+
+      expect(thrown).toMatchObject({
+        status: 302,
+        location: '/login?error=oauth2_callback_failed',
+      });
+    });
+
+    test('treats every empty email as missing', async () => {
+      serveIdToken({ claims: { cesEmail: '', iconEmail: '', wogEmail: '' } });
       const session = buildSession();
       const state = startSignIn(session);
 

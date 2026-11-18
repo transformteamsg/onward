@@ -164,12 +164,18 @@ export const GET: RequestHandler = async (event) => {
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
-  const email = claims['cesEmail'] || claims['iconEmail'] || claims['wogEmail'];
-
-  if (typeof email !== 'string') {
+  // Edupass's email claims are nullable, so only a non-empty string counts as an email.
+  let email: string;
+  if (typeof claims['cesEmail'] === 'string' && claims['cesEmail'] !== '') {
+    email = claims['cesEmail'];
+  } else if (typeof claims['iconEmail'] === 'string' && claims['iconEmail'] !== '') {
+    email = claims['iconEmail'];
+  } else if (typeof claims['wogEmail'] === 'string' && claims['wogEmail'] !== '') {
+    email = claims['wogEmail'];
+  } else {
     logger.warn(
       { edupassId: claims['id'] },
-      'Rejected sign-in from an Edupass account with no CES, ICON or WOG email',
+      'Rejected sign-in from an Edupass account with no email',
     );
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
