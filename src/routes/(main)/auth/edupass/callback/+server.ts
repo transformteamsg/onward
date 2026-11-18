@@ -154,15 +154,13 @@ export const GET: RequestHandler = async (event) => {
   }
 
   // The learner is identified by the Edupass `id` claim, never the Entra `sub` claim.
-  const edupassId = claims['id'];
-  if (typeof edupassId !== 'string' || edupassId === '') {
+  if (typeof claims['id'] !== 'string' || claims['id'] === '') {
     logger.error('Edupass ID token missing claim: id');
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
-  const name = claims['name'];
-  if (typeof name !== 'string' || name === '') {
-    logger.error({ edupassId }, 'Edupass ID token missing claim: name');
+  if (typeof claims['name'] !== 'string' || claims['name'] === '') {
+    logger.error({ edupassId: claims['id'] }, 'Edupass ID token missing claim: name');
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
@@ -170,7 +168,7 @@ export const GET: RequestHandler = async (event) => {
 
   if (typeof email !== 'string') {
     logger.warn(
-      { edupassId },
+      { edupassId: claims['id'] },
       'Rejected sign-in from an Edupass account with no CES, ICON or WOG email',
     );
     return redirect(302, '/login?error=oauth2_callback_failed');
@@ -183,7 +181,7 @@ export const GET: RequestHandler = async (event) => {
       name: true,
     },
     where: {
-      edupassId,
+      edupassId: claims['id'],
     },
   } satisfies UserFindUniqueArgs;
 
@@ -191,7 +189,7 @@ export const GET: RequestHandler = async (event) => {
   try {
     user = await db.user.findUnique(userArgs);
   } catch (err) {
-    logger.error({ err, edupassId }, 'Failed to find user');
+    logger.error({ err, edupassId: claims['id'] }, 'Failed to find user');
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
@@ -199,16 +197,16 @@ export const GET: RequestHandler = async (event) => {
     try {
       user = await db.user.create({
         data: {
-          name,
+          name: claims['name'],
           // Lowercased, because the unique index on `users.email` is case-sensitive.
           email: email.toLowerCase(),
-          edupassId,
+          edupassId: claims['id'],
         },
         select: userArgs.select,
       });
     } catch (err) {
       if (!(err instanceof PrismaClientKnownRequestError && err.code === 'P2002')) {
-        logger.error({ err, edupassId }, 'Failed to create user');
+        logger.error({ err, edupassId: claims['id'] }, 'Failed to create user');
         return redirect(302, '/login?error=oauth2_callback_failed');
       }
 
@@ -218,14 +216,17 @@ export const GET: RequestHandler = async (event) => {
       try {
         user = await db.user.findUnique(userArgs);
       } catch (findErr) {
-        logger.error({ err: findErr, edupassId }, 'Failed to find user');
+        logger.error({ err: findErr, edupassId: claims['id'] }, 'Failed to find user');
         return redirect(302, '/login?error=oauth2_callback_failed');
       }
       if (!user) {
-        logger.warn({ err, edupassId }, 'Rejected sign-in: the email belongs to another learner');
+        logger.warn(
+          { err, edupassId: claims['id'] },
+          'Rejected sign-in: the email belongs to another learner',
+        );
         return redirect(302, '/login?error=oauth2_callback_failed');
       }
-      logger.info({ edupassId }, 'Another sign-in created the user first');
+      logger.info({ edupassId: claims['id'] }, 'Another sign-in created the user first');
     }
   }
 
@@ -236,11 +237,11 @@ export const GET: RequestHandler = async (event) => {
       name: user.name,
     });
   } catch (err) {
-    logger.error({ err, edupassId }, 'Failed to sign in user');
+    logger.error({ err, edupassId: claims['id'] }, 'Failed to sign in user');
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
-  logger.info({ edupassId }, 'Successfully signed in user');
+  logger.info({ edupassId: claims['id'] }, 'Successfully signed in user');
 
   // The state matched the one this server made, so it is always the base64url JSON from
   // `/auth/edupass`.
