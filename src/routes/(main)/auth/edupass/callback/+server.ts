@@ -17,9 +17,9 @@ import { resolveReturnTo } from '$lib/server/return-to.js';
 import type { RequestHandler } from './$types';
 
 /**
- * Completes Edupass sign-in. Checks the state, redeems the code for a validated ID token, creates the
- * learner by Edupass ID or updates their name from the token, and starts the learner session. Every
- * failure redirects to the login page with an error code.
+ * Completes Edupass sign-in. Checks the state, redeems the code for a validated ID token, creates or
+ * updates the learner by Edupass ID with the name and email from the token, and starts the learner
+ * session. Every failure redirects to the login page with an error code.
  *
  * @throws Redirect to the `return_to` page on success, or to the login page with an error code.
  */
@@ -191,11 +191,12 @@ export const GET: RequestHandler = async (event) => {
     },
     update: {
       name: claims['name'],
+      email,
     },
   } satisfies UserUpsertArgs;
 
-  // Edupass is the source of truth, so every sign-in overwrites the name. The email's unique index
-  // refuses a new learner whose email another learner holds, and accounts are never joined.
+  // Edupass is the source of truth, so every sign-in overwrites the name and email. The email's
+  // unique index refuses an email another learner holds, and accounts are never joined.
   let user: UserGetPayload<typeof userArgs>;
   try {
     user = await db.user.upsert(userArgs);

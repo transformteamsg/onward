@@ -21,7 +21,7 @@ const { mockSignIn, mockUpsert } = vi.hoisted(() => ({
       (args: {
         where: { edupassId: string };
         create: { name: string; email: string; edupassId: string };
-        update: { name: string };
+        update: { name: string; email: string };
       }) => Promise<unknown>
     >(),
 }));
@@ -232,10 +232,10 @@ beforeEach(async () => {
     }
     return new Response('not found', { status: 404 });
   });
-  mockUpsert.mockImplementation(async ({ create }) => ({
+  mockUpsert.mockImplementation(async ({ update }) => ({
     id: '7',
-    email: create.email,
-    name: create.name,
+    email: update.email,
+    name: update.name,
   }));
   mockSignIn.mockResolvedValue(undefined);
 
@@ -346,7 +346,7 @@ describe('GET /auth/edupass/callback', () => {
       });
     });
 
-    test("updates an existing learner's name", async () => {
+    test('updates an existing learner with the name and chosen email', async () => {
       const session = buildSession();
       const state = startSignIn(session);
 
@@ -356,6 +356,7 @@ describe('GET /auth/edupass/callback', () => {
 
       expect(mockUpsert.mock.lastCall?.[0].update).toEqual({
         name: 'Edupass Learner',
+        email: 'ces@example.com',
       });
     });
 
@@ -382,7 +383,7 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(mockUpsert.mock.lastCall?.[0].create.email).toBe('icon@example.com');
+      expect(mockUpsert.mock.lastCall?.[0].update.email).toBe('icon@example.com');
     });
 
     test('uses the WOG email when the CES and ICON emails are empty', async () => {
@@ -394,7 +395,7 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(mockUpsert.mock.lastCall?.[0].create.email).toBe('wog@example.com');
+      expect(mockUpsert.mock.lastCall?.[0].update.email).toBe('wog@example.com');
     });
 
     test('stores the chosen email as Edupass sends it', async () => {
@@ -406,7 +407,7 @@ describe('GET /auth/edupass/callback', () => {
         () => undefined,
       );
 
-      expect(mockUpsert.mock.lastCall?.[0].create.email).toBe('John.Tan@Example.COM');
+      expect(mockUpsert.mock.lastCall?.[0].update.email).toBe('John.Tan@Example.COM');
     });
   });
 
