@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.17.0 (2026-11-18)
+
+### Features ✨
+
+- feat: prepare the users table for Edupass sign-in ([#697](https://github.com/transformteamsg/onward/pull/697)) ([2c4dc4e](https://github.com/transformteamsg/onward/commit/2c4dc4e))
+- feat: set up oauth4webapi for Edupass ([#699](https://github.com/transformteamsg/onward/pull/699)) ([7a2be39](https://github.com/transformteamsg/onward/commit/7a2be39))
+- feat: add the /auth/edupass route ([#701](https://github.com/transformteamsg/onward/pull/701)) ([47c2cef](https://github.com/transformteamsg/onward/commit/47c2cef))
+- feat: add the /auth/edupass/callback route ([#703](https://github.com/transformteamsg/onward/pull/703)) ([25773fa](https://github.com/transformteamsg/onward/commit/25773fa))
+- feat: remove Google sign-in for learners ([#709](https://github.com/transformteamsg/onward/pull/709)) ([6685dbe](https://github.com/transformteamsg/onward/commit/6685dbe))
+- feat: redirect `/logout` to the Edupass logout endpoint ([#710](https://github.com/transformteamsg/onward/pull/710)) ([e927fcd](https://github.com/transformteamsg/onward/commit/e927fcd))
+- feat: stop using the Edupass notification email as a learner's email ([#714](https://github.com/transformteamsg/onward/pull/714)) ([8b177b2](https://github.com/transformteamsg/onward/commit/8b177b2))
+- feat: update a learner's name and email from Edupass on sign-in ([#715](https://github.com/transformteamsg/onward/pull/715)) ([3480db4](https://github.com/transformteamsg/onward/commit/3480db4))
+
 ## 1.16.3 (2026-09-17)
 
 ### Bug Fixes 🐛
