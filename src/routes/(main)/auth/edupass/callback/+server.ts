@@ -10,21 +10,16 @@ import {
   getEdupassRequestOptions,
 } from '$lib/server/auth/edupass.js';
 import { learnerAuth } from '$lib/server/auth/index.js';
-import {
-  db,
-  PrismaClientKnownRequestError,
-  type UserFindUniqueArgs,
-  type UserGetPayload,
-} from '$lib/server/db.js';
+import { db, type UserGetPayload, type UserUpsertArgs } from '$lib/server/db.js';
 import { decodeRoutePathname } from '$lib/server/request-path.js';
 import { resolveReturnTo } from '$lib/server/return-to.js';
 
 import type { RequestHandler } from './$types';
 
 /**
- * Completes Edupass sign-in. Checks the state, redeems the code for a validated ID token, finds or
- * creates the learner by Edupass ID, and starts the learner session. Every failure redirects to the
- * login page with an error code.
+ * Completes Edupass sign-in. Checks the state, redeems the code for a validated ID token, creates the
+ * learner by Edupass ID or updates their name from the token, and starts the learner session. Every
+ * failure redirects to the login page with an error code.
  *
  * @throws Redirect to the `return_to` page on success, or to the login page with an error code.
  */
@@ -189,50 +184,24 @@ export const GET: RequestHandler = async (event) => {
     where: {
       edupassId: claims['id'],
     },
-  } satisfies UserFindUniqueArgs;
+    create: {
+      name: claims['name'],
+      email,
+      edupassId: claims['id'],
+    },
+    update: {
+      name: claims['name'],
+    },
+  } satisfies UserUpsertArgs;
 
-  let user: UserGetPayload<typeof userArgs> | null;
+  // Edupass is the source of truth, so every sign-in overwrites the name. The email's unique index
+  // refuses a new learner whose email another learner holds, and accounts are never joined.
+  let user: UserGetPayload<typeof userArgs>;
   try {
-    user = await db.user.findUnique(userArgs);
+    user = await db.user.upsert(userArgs);
   } catch (err) {
-    logger.error({ err, edupassId: claims['id'] }, 'Failed to find user');
+    logger.error({ err, edupassId: claims['id'] }, 'Failed to save user');
     return redirect(302, '/login?error=oauth2_callback_failed');
-  }
-
-  if (!user) {
-    try {
-      user = await db.user.create({
-        data: {
-          name: claims['name'],
-          email,
-          edupassId: claims['id'],
-        },
-        select: userArgs.select,
-      });
-    } catch (err) {
-      if (!(err instanceof PrismaClientKnownRequestError && err.code === 'P2002')) {
-        logger.error({ err, edupassId: claims['id'] }, 'Failed to create user');
-        return redirect(302, '/login?error=oauth2_callback_failed');
-      }
-
-      // A unique index refused the insert. When a learner with this Edupass ID now exists, a
-      // second first sign-in created it first. Otherwise another learner holds the email, and
-      // accounts are never joined.
-      try {
-        user = await db.user.findUnique(userArgs);
-      } catch (findErr) {
-        logger.error({ err: findErr, edupassId: claims['id'] }, 'Failed to find user');
-        return redirect(302, '/login?error=oauth2_callback_failed');
-      }
-      if (!user) {
-        logger.warn(
-          { err, edupassId: claims['id'] },
-          'Rejected sign-in: the email belongs to another learner',
-        );
-        return redirect(302, '/login?error=oauth2_callback_failed');
-      }
-      logger.info({ edupassId: claims['id'] }, 'Another sign-in created the user first');
-    }
   }
 
   try {
