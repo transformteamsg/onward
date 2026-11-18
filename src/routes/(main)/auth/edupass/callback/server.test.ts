@@ -454,6 +454,21 @@ describe('GET /auth/edupass/callback', () => {
         location: '/login?error=oauth2_callback_failed',
       });
     });
+
+    test('redirects to the login page with an error when every email is empty', async () => {
+      serveIdToken({ claims: { cesEmail: '', iconEmail: '', wogEmail: '' } });
+      const session = buildSession();
+      const state = startSignIn(session);
+
+      const thrown: unknown = await Promise.resolve(
+        GET(callbackEvent(session, { code: 'auth-code', state })),
+      ).catch((err: unknown) => err);
+
+      expect(thrown).toMatchObject({
+        status: 302,
+        location: '/login?error=oauth2_callback_failed',
+      });
+    });
   });
 
   describe('when the email already belongs to another learner', () => {

@@ -168,7 +168,7 @@ export const GET: RequestHandler = async (event) => {
 
   const email = claims['cesEmail'] || claims['iconEmail'] || claims['wogEmail'];
 
-  if (typeof email !== 'string') {
+  if (typeof email !== 'string' || email === '') {
     logger.warn(
       { edupassId },
       'Rejected sign-in from an Edupass account with no CES, ICON or WOG email',
