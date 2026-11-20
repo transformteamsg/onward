@@ -17,9 +17,9 @@ import { resolveReturnTo } from '$lib/server/return-to.js';
 import type { RequestHandler } from './$types';
 
 /**
- * Completes Edupass sign-in. Checks the state, redeems the code for a validated ID token, creates or
- * updates the learner by Edupass ID with the name and email from the token, and starts the learner
- * session. Every failure redirects to the login page with an error code.
+ * Completes Edupass sign-in. Checks the state, redeems the code for a validated ID token, allows only
+ * staff, temp, intern, and vendor identity types, creates or updates the learner by Edupass ID with
+ * the name and email from the token, and starts the learner session. Every failure redirects to the login page with an error code.
  *
  * @throws Redirect to the `return_to` page on success, or to the login page with an error code.
  */
@@ -151,6 +151,24 @@ export const GET: RequestHandler = async (event) => {
   // The learner is identified by the Edupass `id` claim, never the Entra `sub` claim.
   if (typeof claims['id'] !== 'string' || claims['id'] === '') {
     logger.error('Edupass ID token missing claim: id');
+    return redirect(302, '/login?error=oauth2_callback_failed');
+  }
+
+  if (typeof claims['identityType'] !== 'string' || claims['identityType'] === '') {
+    logger.error({ edupassId: claims['id'] }, 'Edupass ID token missing claim: identityType');
+    return redirect(302, '/login?error=oauth2_callback_failed');
+  }
+
+  if (
+    claims['identityType'] !== 'Staff' &&
+    claims['identityType'] !== 'Temp' &&
+    claims['identityType'] !== 'Intern' &&
+    claims['identityType'] !== 'Vendor'
+  ) {
+    logger.warn(
+      { edupassId: claims['id'], identityType: claims['identityType'] },
+      'Rejected sign-in from an Edupass account with an identity type that is not allowed',
+    );
     return redirect(302, '/login?error=oauth2_callback_failed');
   }
 
