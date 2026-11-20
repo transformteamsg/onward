@@ -101,6 +101,7 @@ function serveIdToken({
       exp: iat + 3600,
       id: EDUPASS_ID,
       name: 'Edupass Learner',
+      identityType: 'Staff',
       notificationEmail: 'notify@example.com',
       cesEmail: 'ces@example.com',
       iconEmail: 'icon@example.com',
@@ -443,6 +444,105 @@ describe('GET /auth/edupass/callback', () => {
     });
   });
 
+  describe('checking the identity type', () => {
+    test.each(['Staff', 'Temp', 'Intern', 'Vendor'])(
+      'signs in a learner whose identity type is %s',
+      async (identityType) => {
+        serveIdToken({ claims: { identityType } });
+        const session = buildSession();
+        const state = startSignIn(session);
+
+        await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
+          () => undefined,
+        );
+
+        expect(mockSignIn).toHaveBeenCalledOnce();
+      },
+    );
+
+    test.each(['Student', 'Non-human', 'Others', 'staff'])(
+      'redirects to the login page with an error when the identity type is %s',
+      async (identityType) => {
+        serveIdToken({ claims: { identityType } });
+        const session = buildSession();
+        const state = startSignIn(session);
+
+        const thrown: unknown = await Promise.resolve(
+          GET(callbackEvent(session, { code: 'auth-code', state })),
+        ).catch((err: unknown) => err);
+
+        expect(thrown).toMatchObject({
+          status: 302,
+          location: '/login?error=oauth2_callback_failed',
+        });
+      },
+    );
+
+    test('logs a warning with the Edupass ID and the identity type', async () => {
+      serveIdToken({ claims: { identityType: 'Student' } });
+      const session = buildSession();
+      const state = startSignIn(session);
+
+      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
+        () => undefined,
+      );
+
+      expect(logWarn).toHaveBeenCalledWith(
+        { edupassId: EDUPASS_ID, identityType: 'Student' },
+        'Rejected sign-in from an Edupass account with an identity type that is not allowed',
+      );
+    });
+
+    test('does not save a learner whose identity type is not allowed', async () => {
+      serveIdToken({ claims: { identityType: 'Student' } });
+      const session = buildSession();
+      const state = startSignIn(session);
+
+      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
+        () => undefined,
+      );
+
+      expect(mockUpsert).not.toHaveBeenCalled();
+    });
+
+    test('checks the identity type before the email', async () => {
+      serveIdToken({
+        claims: {
+          identityType: 'Student',
+          cesEmail: undefined,
+          iconEmail: undefined,
+          wogEmail: undefined,
+        },
+      });
+      const session = buildSession();
+      const state = startSignIn(session);
+
+      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
+        () => undefined,
+      );
+
+      expect(logWarn).toHaveBeenCalledWith(
+        expect.anything(),
+        'Rejected sign-in from an Edupass account with an identity type that is not allowed',
+      );
+    });
+
+    test('logs an error with the Edupass ID when the ID token has no identityType claim', async () => {
+      serveIdToken({ claims: { identityType: undefined } });
+      const session = buildSession();
+      const state = startSignIn(session);
+
+      await Promise.resolve(GET(callbackEvent(session, { code: 'auth-code', state }))).catch(
+        () => undefined,
+      );
+
+      expect(logError).toHaveBeenCalledWith(
+        { edupassId: EDUPASS_ID },
+        'Edupass ID token missing claim: identityType',
+      );
+    });
+  });
+
   // The usual cause is another learner already holding the chosen email.
   describe('when saving the learner fails', () => {
     test('redirects to the login page with an error', async () => {
@@ -711,6 +811,7 @@ describe('GET /auth/edupass/callback', () => {
     test.each([
       ['has no id claim', { claims: { id: undefined } }],
       ['has no name claim', { claims: { name: undefined } }],
+      ['has no identityType claim', { claims: { identityType: undefined } }],
       [
         'is signed by a key Edupass does not publish',
         { signingKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey },
