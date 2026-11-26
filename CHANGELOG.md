@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.18.0 (2026-11-26)
+
+### Features ✨
+
+- feat: sign in only Edupass staff, temp, intern, and vendor accounts ([#718](https://github.com/transformteamsg/onward/pull/718)) ([f5561e5](https://github.com/transformteamsg/onward/commit/f5561e5))
+
+### Chores 🧹
+
+- chore: update dependencies with security advisories ([#720](https://github.com/transformteamsg/onward/pull/720)) ([32d829e](https://github.com/transformteamsg/onward/commit/32d829e))
+
 ## 1.17.0 (2026-11-18)
 
 ### Features ✨
