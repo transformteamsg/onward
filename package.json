@@ -23,8 +23,8 @@
     "@aws-sdk/client-s3": "^3.1123.0",
     "@aws-sdk/cloudfront-signer": "^3.1116.0",
     "@aws-sdk/s3-request-presigner": "^3.1123.0",
-    "@prisma/adapter-pg": "^7.10.0",
-    "@prisma/client": "^7.10.0",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
     "@valkey/valkey-glide": "2.0.1",
     "exceljs": "^4.4.0",
     "oauth4webapi": "^3.8.8",
@@ -34,9 +34,9 @@
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@lucide/svelte": "^0.511.0",
-    "@sveltejs/adapter-node": "^5.5.7",
+    "@sveltejs/adapter-node": "^5.5.8",
     "@sveltejs/enhanced-img": "^0.8.5",
-    "@sveltejs/kit": "2.70.2",
+    "@sveltejs/kit": "2.70.4",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.3.3",
@@ -44,9 +44,9 @@
     "@testing-library/svelte": "^5.4.2",
     "@testing-library/user-event": "^14.6.6",
     "@types/node": "^24.13.3",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "date-fns": "^4.4.0",
-    "dompurify": "^3.4.14",
+    "dompurify": "^3.4.17",
     "dotenv": "^17.4.2",
     "eslint": "^9.39.5",
     "eslint-plugin-simple-import-sort": "^12.1.1",
@@ -63,24 +63,15 @@
     "prettier": "^3.6.2",
     "prettier-plugin-svelte": "^3.4.0",
     "prettier-plugin-tailwindcss": "^0.6.13",
-    "prisma": "^7.10.0",
+    "prisma": "^7.10.1",
     "svelte": "5.55.7",
     "svelte-check": "^4.7.6",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.69.0",
+    "typescript-eslint": "^8.73.0",
     "uuid": "^14.0.2",
-    "vite": "^7.3.6",
-    "vitest": "^4.1.11"
-  },
-  "pnpm": {
-    "overrides": {
-      "cookie": "0.7.2",
-      "deepmerge-ts": "8.0.0",
-      "exceljs>uuid": "11.1.1",
-      "mysql2": "3.23.1",
-      "sharp": "0.35.4"
-    }
+    "vite": "^7.3.7",
+    "vitest": "^4.1.12"
   }
 }
